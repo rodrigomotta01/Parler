@@ -173,16 +173,40 @@ List<String> splitSentences(String para) {
   return out.isEmpty ? [raw] : out;
 }
 
+/// Long sentences are split into short readable chunks (at `, ; :` first, then by
+/// word count) so each PT-BR translation sits right under its French chunk.
 void _pushClause(List<String> out, String s) {
-  if (s.length > 65 && s.contains(': ')) {
-    final idx = s.indexOf(': ');
-    if (idx >= 22 && s.length - idx >= 18) {
-      out.add(s.substring(0, idx + 1).trim());
-      out.add(s.substring(idx + 2).trim());
-      return;
+  final w = s.split(' ');
+  if (w.length <= 14) {
+    out.add(s);
+    return;
+  }
+  final chunks = <String>[];
+  var cur = '';
+  for (final part in s.split(RegExp(r'(?<=[,;:])\s+'))) {
+    cur = cur.isEmpty ? part : '$cur $part';
+    if (cur.split(' ').length >= 7) {
+      chunks.add(cur);
+      cur = '';
     }
   }
-  out.add(s);
+  if (cur.isNotEmpty) {
+    if (chunks.isNotEmpty && cur.split(' ').length < 4) {
+      chunks[chunks.length - 1] += ' $cur';
+    } else {
+      chunks.add(cur);
+    }
+  }
+  for (final c in chunks) {
+    final cw = c.split(' ');
+    if (cw.length <= 22) {
+      out.add(c);
+    } else {
+      for (var i = 0; i < cw.length; i += 16) {
+        out.add(cw.sublist(i, min(i + 16, cw.length)).join(' '));
+      }
+    }
+  }
 }
 
 List<String> sentenceWords(String sent) =>
@@ -1278,6 +1302,7 @@ class _StoryScreenState extends State<StoryScreen> {
   late int _chap;
   bool _hidePt = false;
   DateTime? _lastUserDragAt;
+  bool _scrollBusy = false;
   double _rate = 0.45; // 0.30 = 0.75x, 0.45 = 1.0x, 0.58 = 1.25x
   int _runId = 0;
   Timer? _fallbackWordTimer;
@@ -1318,6 +1343,9 @@ class _StoryScreenState extends State<StoryScreen> {
       playing: false,
     ));
 
+    _cursor.addListener(() {
+      if (_playing) _scrollToCurrent();
+    });
     _setupTtsProgress();
   }
 
@@ -1372,60 +1400,52 @@ class _StoryScreenState extends State<StoryScreen> {
     }
   }
 
-  /// Smooth auto-scroll: keeps the page still while reading the upper/middle zone,
-  /// and glides smoothly to the upper third as soon as reading passes 60% of the screen.
-  void _scrollToCurrent({bool force = false}) {
-    final userJustDragged = _lastUserDragAt != null &&
-        DateTime.now().difference(_lastUserDragAt!) <
-            const Duration(seconds: 2);
-    if (userJustDragged && !force) return;
+  /// Auto-scroll that follows the active sentence: stays still while it sits in the
+  /// upper ~60% of the viewport, otherwise glides it to ~18% from the top. Re-checks
+  /// itself after each glide (heights change when translations load) and retries
+  /// when the target row has not been built yet by the lazy list.
+  void _scrollToCurrent({bool force = false, int attempt = 0}) {
+    final justDragged = _lastUserDragAt != null &&
+        DateTime.now().difference(_lastUserDragAt!) < const Duration(seconds: 2);
+    if (justDragged && !force) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollCtrl.hasClients) return;
-      final key = GlobalObjectKey('s_${_chap}_${_paraIdx}_$_sentIdx');
-      final ctx = key.currentContext;
+      if (!mounted || !_scrollCtrl.hasClients || _scrollBusy) return;
+      final pos = _scrollCtrl.position;
+      final ctx =
+          GlobalObjectKey('s_${_chap}_${_paraIdx}_$_sentIdx').currentContext;
       if (ctx == null) {
-        final totalP = max(1, widget.b.chapters[_chap].paragraphs.length);
-        final approx = (_paraIdx / totalP) * _scrollCtrl.position.maxScrollExtent;
-        _scrollCtrl.jumpTo(approx.clamp(0.0, _scrollCtrl.position.maxScrollExtent));
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          final retryCtx = key.currentContext;
-          if (retryCtx != null) {
-            Scrollable.ensureVisible(
-              retryCtx,
-              alignment: 0.22,
-              duration: const Duration(milliseconds: 300),
-              curve: T.curve,
-            );
-          }
-        });
+        // Row not built yet: jump close to it, then retry (max 5 times).
+        if (attempt >= 5) return;
+        final total = max(1, widget.b.chapters[_chap].paragraphs.length);
+        _scrollCtrl.jumpTo(
+            (_paraIdx / total * pos.maxScrollExtent).clamp(0.0, pos.maxScrollExtent));
+        _scrollToCurrent(force: force, attempt: attempt + 1);
         return;
       }
-
       final box = ctx.findRenderObject() as RenderBox?;
       final listBox = _listKey.currentContext?.findRenderObject() as RenderBox?;
       if (box == null || !box.hasSize || listBox == null || !listBox.hasSize) {
         return;
       }
-
       final topY = box.localToGlobal(Offset.zero, ancestor: listBox).dy;
       final botY = topY + box.size.height;
       final vpH = listBox.size.height;
+      if (!force && topY >= vpH * 0.05 && botY <= vpH * 0.62) return;
 
-      // Stay completely steady while sentence is in the comfortable upper/mid reading zone.
-      if (!force && topY >= vpH * 0.08 && botY <= vpH * 0.60) return;
-
-      final target = (_scrollCtrl.offset + topY - vpH * 0.22)
-          .clamp(0.0, _scrollCtrl.position.maxScrollExtent);
-      _scrollCtrl.animateTo(
-        target,
-        duration: const Duration(milliseconds: 380),
-        curve: T.curve,
-      );
+      final target =
+          (pos.pixels + topY - vpH * 0.18).clamp(0.0, pos.maxScrollExtent);
+      if ((target - pos.pixels).abs() < 4) return;
+      _scrollBusy = true;
+      _scrollCtrl
+          .animateTo(target,
+              duration: const Duration(milliseconds: 380), curve: T.curve)
+          .whenComplete(() {
+        _scrollBusy = false;
+        if (mounted && _playing) _scrollToCurrent();
+      });
     });
   }
-
   Future<void> _pauseAudio() async {
     _runId++;
     _fallbackWordTimer?.cancel();

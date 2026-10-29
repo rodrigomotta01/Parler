@@ -74,6 +74,16 @@ void main() {
     ]);
   });
 
+  test('splitSentences: long sentence is chunked so translation stays close', () {
+    const long = 'Au loin, la Seine coulait lentement vers Rouen, large et paisible '
+        'sous la lumière dorée du matin, tandis que les oiseaux chantaient '
+        'dans les grands arbres du jardin et que le vent se levait doucement.';
+    final chunks = splitSentences(long);
+    expect(chunks.length, greaterThan(2));
+    expect(chunks.every((c) => c.split(' ').length <= 22), isTrue);
+    expect(chunks.join(' '), long);
+  });
+
   test('parseEbookBytes: parses .epub with embedded image and .pdf document', () {
     // 1. EPUB with image + 2 paragraphs
     final arch = Archive();
