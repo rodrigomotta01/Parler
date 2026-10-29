@@ -3,12 +3,30 @@ import 'dart:typed_data';
 import 'dart:ui' show Rect;
 
 import 'package:archive/archive.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:parler/db.dart';
+import 'package:parler/main.dart';
 import 'package:parler/screens/grammar.dart';
 import 'package:parler/screens/listen.dart';
 import 'package:parler/srs.dart';
+import 'package:parler/ui.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
+
+class _FakeStore extends ChangeNotifier implements Store {
+  @override
+  String? cachedTranslation(String fr) => 'Tradução simulada para: $fr';
+  @override
+  Future<String> translate(String fr) async => 'Tradução simulada para: $fr';
+  @override
+  Set<int> get cardIds => const {};
+  @override
+  String get level => 'B1';
+  @override
+  Vocab get vocab => Vocab(const {'words': [], 'forms': {}});
+  @override
+  dynamic noSuchMethod(Invocation invocation) => Future<void>.value();
+}
 
 void main() {
   test('streak: consecutive days, custom goal, freeze, gap breaks', () {
@@ -194,6 +212,93 @@ void main() {
           expect(ex.options.isNotEmpty, isTrue);
           expect(ex.options.contains(ex.solution), isTrue);
         }
+      }
+    }
+  });
+
+  testWidgets('Moto Edge 70 Fusion: zero text clipped at top during reading, auto-scroll and reset', (tester) async {
+    tester.view.physicalSize = const Size(412 * 3, 915 * 3);
+    tester.view.devicePixelRatio = 3.0;
+    tester.view.padding = const FakeViewPadding(top: 52 * 3, bottom: 24 * 3);
+    addTearDown(tester.view.reset);
+
+    try {
+      store = _FakeStore();
+    } catch (_) {}
+
+    final book = (
+      id: -99,
+      title: 'Le Petit Prince — Antoine de Saint-Exupéry',
+      level: 'B1',
+      chapterIdx: 0,
+      paraIdx: 0,
+      sentIdx: 0,
+      wordIdx: 0,
+      chapters: [
+        (
+          title: 'Chapitre I',
+          paragraphs: [
+            'Lorsque j’avais six ans j’ai vu, une fois, une magnifique image, dans un livre sur la Forêt Vierge qui s’appelait Histoires Vécues. Ça représentait un serpent boa qui avalait un fauve. Voilà la copie du dessin.',
+            'On disait dans le livre : Les serpents boas avalent leur proie tout entière, sans la mâcher. Ensuite ils ne peuvent plus bouger et ils dorment pendant les six mois de leur digestion.',
+            'J’ai alors beaucoup réfléchi sur les aventures de la jungle et, à mon tour, j’ai réussi, avec un crayon de couleur, à tracer mon premier dessin. Mon dessin numéro 1. Il était comme ça.',
+            'J’ai montré mon chef-d’œuvre aux grandes personnes et je leur ai demandé si mon dessin leur faisait peur. Elles m’ont répondu : Pourquoi un chapeau ferait-il peur ?',
+            'Mon dessin ne représentait pas un chapeau. Il représentait un serpent boa qui digérait un éléphant. J’ai alors dessiné l’intérieur du serpent boa, afin que les grandes personnes puissent comprendre.',
+          ],
+        ),
+        (
+          title: 'Chapitre II',
+          paragraphs: ['Deuxième chapitre.'],
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(MaterialApp(theme: T.theme(), home: StoryScreen(book)));
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byType(ListView);
+    expect(listFinder, findsOneWidget);
+    final listBox = tester.renderObject<RenderBox>(listFinder);
+    expect(listBox.size.height, greaterThan(500));
+
+    final firstParaFinder = find.byType(BilingualParagraph).first;
+    final firstParaBox = tester.renderObject<RenderBox>(firstParaFinder);
+    final initTop = firstParaBox.localToGlobal(Offset.zero, ancestor: listBox).dy;
+    expect(initTop, equals(32.0));
+
+    for (var step = 1; step <= 12; step++) {
+      await tester.tap(find.byTooltip('Avançar próxima frase'));
+      await tester.pumpAndSettle();
+
+      final paraWidgets = tester.renderObjectList<RenderBox>(find.byType(BilingualParagraph));
+      for (final pBox in paraWidgets) {
+        if (!pBox.hasSize) continue;
+        final top = pBox.localToGlobal(Offset.zero, ancestor: listBox).dy;
+        final bot = top + pBox.size.height;
+        final isSlicedAtTop = top < 0.0 && bot > 0.0;
+        expect(isSlicedAtTop, isFalse,
+            reason: 'Paragraph card is sliced at top: top=$top, bot=$bot on step $step');
+      }
+    }
+
+    await tester.tap(find.text('Início ↺'));
+    await tester.pumpAndSettle();
+
+    final resetParaBox = tester.renderObject<RenderBox>(firstParaFinder);
+    final resetTop = resetParaBox.localToGlobal(Offset.zero, ancestor: listBox).dy;
+    expect(resetTop, equals(32.0));
+
+    for (var step = 1; step <= 10; step++) {
+      await tester.tap(find.byTooltip('Avançar próxima frase'));
+      await tester.pumpAndSettle();
+
+      final paraWidgets = tester.renderObjectList<RenderBox>(find.byType(BilingualParagraph));
+      for (final pBox in paraWidgets) {
+        if (!pBox.hasSize) continue;
+        final top = pBox.localToGlobal(Offset.zero, ancestor: listBox).dy;
+        final bot = top + pBox.size.height;
+        final isSlicedAtTop = top < 0.0 && bot > 0.0;
+        expect(isSlicedAtTop, isFalse,
+            reason: 'Paragraph card is sliced at top on second pass step $step: top=$top, bot=$bot');
       }
     }
   });

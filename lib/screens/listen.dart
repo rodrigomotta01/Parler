@@ -1095,7 +1095,8 @@ class BilingualParagraph extends StatefulWidget {
     this.isPlaying = false,
     this.hidePt = false,
     this.onTapSentenceAudio,
-    this.keyPrefix,
+    this.paraKey,
+    this.sentKeyOf,
   });
   final String text;
   final ValueChanged<String> onTapWord;
@@ -1106,7 +1107,8 @@ class BilingualParagraph extends StatefulWidget {
   final bool isPlaying;
   final bool hidePt;
   final ValueChanged<int>? onTapSentenceAudio;
-  final String? keyPrefix;
+  final GlobalKey? paraKey;
+  final GlobalKey Function(int sentIdx)? sentKeyOf;
 
   @override
   State<BilingualParagraph> createState() => _BilingualParagraphState();
@@ -1129,10 +1131,8 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
     final hasCursor = widget.activeSentIdx != null;
 
     return Container(
-      key: widget.keyPrefix != null
-          ? GlobalObjectKey('para_${widget.keyPrefix}')
-          : null,
-      margin: const EdgeInsets.only(bottom: T.s4),
+      key: widget.paraKey,
+      margin: const EdgeInsets.only(bottom: T.s6 + T.s2),
       padding: const EdgeInsets.all(T.s3),
       decoration: BoxDecoration(
         color: T.surface,
@@ -1148,13 +1148,11 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
           for (final (sIdx, sent) in sentences.indexed) ...[
             if (sIdx > 0)
               const Padding(
-                padding: EdgeInsets.symmetric(vertical: T.s2),
+                padding: EdgeInsets.symmetric(vertical: T.s4),
                 child: Divider(height: 1, thickness: 0.5, color: T.hairline),
               ),
             Container(
-              key: widget.keyPrefix != null
-                  ? GlobalObjectKey('${widget.keyPrefix}_$sIdx')
-                  : null,
+              key: widget.sentKeyOf?.call(sIdx),
               child: _buildSentenceBlock(sIdx, sent),
             ),
           ],
@@ -1174,7 +1172,8 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
       imgWidget = Image.file(file, fit: BoxFit.contain);
     }
     return Padding(
-      padding: const EdgeInsets.only(bottom: T.s4),
+      key: widget.paraKey,
+      padding: const EdgeInsets.only(bottom: T.s6 + T.s2),
       child: GestureDetector(
         onTap: () => showDialog(
           context: context,
@@ -1390,6 +1389,14 @@ class _StoryScreenState extends State<StoryScreen> {
   bool _hidePt = false;
   DateTime? _lastUserDragAt;
   bool _scrollBusy = false;
+  bool _scrollPending = false;
+  int _scrollSeq = 0;
+  final _paraKeys = <(int, int), GlobalKey>{};
+  final _sentKeys = <(int, int, int), GlobalKey>{};
+
+  GlobalKey _pKey(int p) => _paraKeys.putIfAbsent((_chap, p), GlobalKey.new);
+  GlobalKey _sKey(int p, int s) =>
+      _sentKeys.putIfAbsent((_chap, p, s), GlobalKey.new);
   double _rate = 0.45; // 0.30 = 0.75x, 0.45 = 1.0x, 0.58 = 1.25x
   int _runId = 0;
   Timer? _fallbackWordTimer;
@@ -1435,6 +1442,9 @@ class _StoryScreenState extends State<StoryScreen> {
       if (_playing) _scrollToCurrent();
     });
     _setupTtsProgress();
+    if (initP > 0 || initS > 0) {
+      _scrollToCurrent(force: true);
+    }
   }
 
   void _setupTtsProgress() {
@@ -1478,99 +1488,123 @@ class _StoryScreenState extends State<StoryScreen> {
     }
   }
 
-  /// Auto-scroll that ensures text starts cleanly below the top section:
-  /// stays completely still while the active sentence is comfortably in view (between 16px
-  /// and 72% of the viewport) and the paragraph top is not clipped off-screen.
-  /// When it scrolls, it aligns the entire active paragraph to start cleanly below the top.
+  /// Auto-scroll that keeps the active paragraph/sentence cleanly below the
+  /// fixed top header divider (at `targetTop = T.s6` = 32 dp) without ever
+  /// slicing the active or preceding paragraph/sentence across `y = 0`.
   void _scrollToCurrent({bool force = false, int attempt = 0}) {
     final justDragged = _lastUserDragAt != null &&
-        DateTime.now().difference(_lastUserDragAt!) < const Duration(seconds: 2);
+        DateTime.now().difference(_lastUserDragAt!) <
+            const Duration(seconds: 2);
     if (justDragged && !force) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollCtrl.hasClients || _scrollBusy) return;
+      if (!mounted || !_scrollCtrl.hasClients) return;
+      if (_scrollBusy && !force) {
+        _scrollPending = true;
+        return;
+      }
+
       final pos = _scrollCtrl.position;
-      final sentCtx =
-          GlobalObjectKey('s_${_chap}_${_paraIdx}_$_sentIdx').currentContext;
+      final listBox =
+          _listKey.currentContext?.findRenderObject() as RenderBox?;
+      if (listBox == null || !listBox.hasSize) return;
+      final vpH = listBox.size.height;
+
+      if (force && _paraIdx == 0 && _sentIdx == 0) {
+        if (pos.pixels <= 1.0) return;
+        final myScroll = ++_scrollSeq;
+        _scrollBusy = true;
+        _scrollCtrl
+            .animateTo(0.0, duration: T.fast * 2, curve: T.curve)
+            .whenComplete(() {
+          if (_scrollSeq != myScroll) return;
+          _scrollBusy = false;
+          if (_scrollPending && mounted) {
+            _scrollPending = false;
+            _scrollToCurrent();
+          }
+        });
+        return;
+      }
+
+      final sentCtx = _sKey(_paraIdx, _sentIdx).currentContext;
       if (sentCtx == null) {
-        if (attempt >= 5) return;
+        if (attempt >= 12) return;
         final total = max(1, widget.b.chapters[_chap].paragraphs.length);
-        _scrollCtrl.jumpTo(
-            (_paraIdx / total * pos.maxScrollExtent).clamp(0.0, pos.maxScrollExtent));
+        double est;
+        if (attempt == 0) {
+          est = _paraIdx / total * pos.maxScrollExtent;
+        } else {
+          int? minMounted, maxMounted;
+          for (final entry in _paraKeys.entries) {
+            if (entry.key.$1 == _chap && entry.value.currentContext != null) {
+              final p = entry.key.$2;
+              if (minMounted == null || p < minMounted) minMounted = p;
+              if (maxMounted == null || p > maxMounted) maxMounted = p;
+            }
+          }
+          if (minMounted != null && _paraIdx < minMounted) {
+            est = pos.pixels - vpH * 1.1;
+          } else if (maxMounted != null && _paraIdx > maxMounted) {
+            est = pos.pixels + vpH * 1.1;
+          } else {
+            est = _paraIdx / total * pos.maxScrollExtent;
+          }
+        }
+        _scrollCtrl.jumpTo(est.clamp(0.0, pos.maxScrollExtent));
         _scrollToCurrent(force: force, attempt: attempt + 1);
         return;
       }
-      final sentBox = sentCtx.findRenderObject() as RenderBox?;
-      final listBox = _listKey.currentContext?.findRenderObject() as RenderBox?;
-      if (sentBox == null || !sentBox.hasSize || listBox == null || !listBox.hasSize) {
-        return;
-      }
 
-      final paraCtx =
-          GlobalObjectKey('para_s_${_chap}_$_paraIdx').currentContext;
+      final sentBox = sentCtx.findRenderObject() as RenderBox?;
+      if (sentBox == null || !sentBox.hasSize) return;
+
+      final paraCtx = _pKey(_paraIdx).currentContext;
       final paraBox = paraCtx?.findRenderObject() as RenderBox?;
 
-      final vpH = listBox.size.height;
       final sentTop = sentBox.localToGlobal(Offset.zero, ancestor: listBox).dy;
       final sentBot = sentTop + sentBox.size.height;
       final paraTop = (paraBox != null && paraBox.hasSize)
           ? paraBox.localToGlobal(Offset.zero, ancestor: listBox).dy
           : sentTop;
 
-      final topDisplacement = max(200.0, vpH * 0.35);
-      const minSafeTop = 48.0;
-      final safeBotMargin = vpH * 0.70;
+      const targetTop = T.s6;
+      const minComfortTop = T.s5;
+      final maxComfortBot = vpH - T.s5;
 
-      // When not forced: if the active sentence is comfortably in view
-      // and the paragraph card top is not clipped off-screen, keep page steady.
-      if (!force &&
-          sentTop >= minSafeTop &&
-          sentBot <= safeBotMargin &&
-          paraTop >= minSafeTop) {
+      if (sentTop >= minComfortTop && sentBot <= maxComfortBot) {
         return;
       }
 
-      // If at first paragraph of chapter, prefer keeping offset at 0 if sentence is visible
-      if (_paraIdx == 0 && pos.pixels < 8 && sentBot <= safeBotMargin && !force) {
+      final targetForPara = pos.pixels + paraTop - targetTop;
+      final projectedSentBot = sentBot - (paraTop - targetTop);
+      final rawTarget = projectedSentBot <= maxComfortBot
+          ? targetForPara
+          : (pos.pixels + sentTop - targetTop);
+
+      final target = rawTarget.clamp(0.0, pos.maxScrollExtent);
+      if ((target - pos.pixels).abs() < 2.0) return;
+
+      if (attempt > 0) {
+        _scrollCtrl.jumpTo(target);
         return;
       }
 
-      // Calculate target so the active paragraph (or sentence) lands comfortably further down
-      // below the top section (at ~35% of the viewport, well below the header).
-      double target;
-      if (_paraIdx == 0 && sentTop < vpH * 0.45) {
-        // Near the beginning of chapter: stay at top header
-        target = 0.0;
-      } else {
-        // Position paragraph top cleanly further down below the top section
-        final targetForPara = pos.pixels + paraTop - topDisplacement;
-        final projectedSentBot = sentBot - (paraTop - topDisplacement);
-
-        if (projectedSentBot <= safeBotMargin) {
-          target = targetForPara;
-        } else {
-          // Paragraph is tall: align the active sentence at topDisplacement
-          target = pos.pixels + sentTop - topDisplacement;
-          // But never allow the paragraph top to be pushed into the top section (< minSafeTop)
-          final maxScrollAllowed = pos.pixels + paraTop - minSafeTop;
-          if (target > maxScrollAllowed) {
-            target = maxScrollAllowed;
-          }
-        }
-      }
-
-      target = target.clamp(0.0, pos.maxScrollExtent);
-      if ((target - pos.pixels).abs() < 4) return;
-
+      final myScroll = ++_scrollSeq;
       _scrollBusy = true;
       _scrollCtrl
-          .animateTo(target,
-              duration: const Duration(milliseconds: 380), curve: T.curve)
+          .animateTo(target, duration: T.fast * 2, curve: T.curve)
           .whenComplete(() {
+        if (_scrollSeq != myScroll) return;
         _scrollBusy = false;
+        if (_scrollPending && mounted) {
+          _scrollPending = false;
+          _scrollToCurrent();
+        }
       });
     });
   }
+
   Future<void> _pauseAudio() async {
     _runId++;
     _fallbackWordTimer?.cancel();
@@ -1581,6 +1615,8 @@ class _StoryScreenState extends State<StoryScreen> {
 
   Future<void> _setChapter(int idx) async {
     await _pauseAudio();
+    _paraKeys.clear();
+    _sentKeys.clear();
     setState(() => _chap = idx);
     _updateCursor(para: 0, sent: 0, word: 0, playing: false);
     if (_scrollCtrl.hasClients) _scrollCtrl.jumpTo(0);
@@ -1885,12 +1921,15 @@ class _StoryScreenState extends State<StoryScreen> {
       appBar: AppBar(
         backgroundColor: T.bg,
         surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
         title: Row(children: [
           LevelChip(widget.b.level),
           const SizedBox(width: T.s2),
           Expanded(
               child: Text(widget.b.title,
-                  style: T.secondary, overflow: TextOverflow.ellipsis)),
+                  style: T.body.copyWith(
+                      fontSize: 15, fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis)),
         ]),
         actions: [
           IconButton(
@@ -1912,101 +1951,95 @@ class _StoryScreenState extends State<StoryScreen> {
       ),
       body: Column(
         children: [
+          if (multi)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(T.s4, 0, T.s4, T.s2),
+              child: GlassCard(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: T.s2, vertical: T.s1),
+                child: Row(children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(CupertinoIcons.chevron_left,
+                        size: 18, color: T.text),
+                    onPressed: _chap > 0 ? () => _setChapter(_chap - 1) : null,
+                  ),
+                  Expanded(
+                    child: Text(
+                      'Cap. ${_chap + 1}/${widget.b.chapters.length} · ${chapter.title}',
+                      style: T.body
+                          .copyWith(fontSize: 14, fontWeight: FontWeight.w600),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(CupertinoIcons.chevron_right,
+                        size: 18, color: T.text),
+                    onPressed: _chap < widget.b.chapters.length - 1
+                        ? () => _setChapter(_chap + 1)
+                        : null,
+                  ),
+                ]),
+              ),
+            ),
+          const Divider(height: 1, thickness: 0.5, color: T.hairline),
           Expanded(
-            child: SizedBox.expand(
-              key: _listKey,
-              child: NotificationListener<ScrollUpdateNotification>(
-                onNotification: (n) {
-                  if (n.dragDetails != null) {
-                    _lastUserDragAt = DateTime.now();
-                  }
-                  return false;
-                },
-                child: ListView.builder(
-                  controller: _scrollCtrl,
-                  scrollCacheExtent: const ScrollCacheExtent.pixels(900),
-                  padding: const EdgeInsets.fromLTRB(T.s4, T.s4, T.s4, 320),
-                itemCount: chapter.paragraphs.length + 1,
-                itemBuilder: (context, index) {
-                  if (index == 0) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(widget.b.title, style: T.title),
-                        if (multi) ...[
-                          const SizedBox(height: T.s3),
-                          GlassCard(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: T.s3, vertical: T.s2),
-                            child: Row(children: [
-                              IconButton(
-                                icon: const Icon(CupertinoIcons.chevron_left,
-                                    size: 18),
-                                onPressed: _chap > 0
-                                    ? () => _setChapter(_chap - 1)
-                                    : null,
-                              ),
-                              Expanded(
-                                child: Text(
-                                  'Cap. ${_chap + 1}/${widget.b.chapters.length} · ${chapter.title}',
-                                  style: T.body.copyWith(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w600),
-                                  textAlign: TextAlign.center,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(CupertinoIcons.chevron_right,
-                                    size: 18),
-                                onPressed: _chap < widget.b.chapters.length - 1
-                                    ? () => _setChapter(_chap + 1)
-                                    : null,
-                              ),
-                            ]),
-                          ),
-                        ],
-                        const SizedBox(height: T.s2),
-                        Text(
-                          'Tradução PT-BR abaixo de cada frase · Segure numa palavra para tocar a partir dela.',
-                          style: T.caption,
-                        ),
-                        const SizedBox(height: T.s4),
-                      ],
-                    );
-                  }
-                  final i = index - 1;
-                  final para = chapter.paragraphs[i];
-                  return ValueListenableBuilder<PlayCursor>(
-                    valueListenable: _cursor,
-                    builder: (context, cur, _) {
-                      final active = cur.para == i;
-                      return BilingualParagraph(
-                        para,
-                        showAudio: true,
-                        keyPrefix: 's_${_chap}_$i',
-                        activeSentIdx: active ? cur.sent : null,
-                        activeWordIdx: active ? cur.word : null,
-                        isPlaying: active && cur.playing,
-                        hidePt: _hidePt,
-                        onTapSentenceAudio: (sIdx) =>
-                            _seekTo(i, sIdx, autoPlay: true),
-                        onLongPressWord: (sIdx, wIdx) =>
-                            _seekTo(i, sIdx, wIdx: wIdx, autoPlay: true),
-                        onTapWord: (t) async {
-                          if (_playing) await _pauseAudio();
-                          if (context.mounted) {
-                            tapWordInContext(context, t, 'story');
-                          }
+            child: LayoutBuilder(
+              builder: (context, constraints) => SizedBox.expand(
+                key: _listKey,
+                child: NotificationListener<ScrollUpdateNotification>(
+                  onNotification: (n) {
+                    if (n.dragDetails != null) {
+                      _lastUserDragAt = DateTime.now();
+                    }
+                    return false;
+                  },
+                  child: ListView.builder(
+                    controller: _scrollCtrl,
+                    scrollCacheExtent: const ScrollCacheExtent.pixels(900),
+                    padding: EdgeInsets.fromLTRB(
+                      T.s4,
+                      T.s6,
+                      T.s4,
+                      max(320.0, constraints.maxHeight),
+                    ),
+                    itemCount: chapter.paragraphs.length,
+                    itemBuilder: (context, i) {
+                      final para = chapter.paragraphs[i];
+                      return ValueListenableBuilder<PlayCursor>(
+                        valueListenable: _cursor,
+                        builder: (context, cur, _) {
+                          final active = cur.para == i;
+                          return BilingualParagraph(
+                            para,
+                            showAudio: true,
+                            paraKey: _pKey(i),
+                            sentKeyOf: (sIdx) => _sKey(i, sIdx),
+                            activeSentIdx: active ? cur.sent : null,
+                            activeWordIdx: active ? cur.word : null,
+                            isPlaying: active && cur.playing,
+                            hidePt: _hidePt,
+                            onTapSentenceAudio: (sIdx) =>
+                                _seekTo(i, sIdx, autoPlay: true),
+                            onLongPressWord: (sIdx, wIdx) =>
+                                _seekTo(i, sIdx, wIdx: wIdx, autoPlay: true),
+                            onTapWord: (t) async {
+                              if (_playing) await _pauseAudio();
+                              if (context.mounted) {
+                                tapWordInContext(context, t, 'story');
+                              }
+                            },
+                          );
                         },
                       );
                     },
-                  );
-                },
+                  ),
+                ),
               ),
             ),
-          ),
           ),
           SafeArea(
             minimum: const EdgeInsets.fromLTRB(T.s4, T.s2, T.s4, T.s3),
