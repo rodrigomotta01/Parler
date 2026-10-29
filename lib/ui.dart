@@ -23,9 +23,10 @@ abstract final class T {
 
   // Activity heatmap blue scale (none -> active -> goal met -> 2x goal).
   static const actNone = Color(0xFFEBEDF0);
-  static const actSome = Color(0xFF60A5FA);
+  static const actSome = Color(0xFF93C5FD);
   static const actGoal = Color(0xFF2563EB);
   static const actHigh = Color(0xFF1D4ED8);
+  static const onAccent = Color(0xFFFFFFFF);
 
   static Color level(String l) => switch (l) {
         'A1' => mint,

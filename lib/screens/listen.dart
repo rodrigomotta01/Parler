@@ -8,7 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:html/parser.dart' as html;
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
@@ -1273,10 +1273,11 @@ class StoryScreen extends StatefulWidget {
 
 class _StoryScreenState extends State<StoryScreen> {
   final _scrollCtrl = ScrollController();
+  final _listKey = GlobalKey();
   late final ValueNotifier<PlayCursor> _cursor;
   late int _chap;
   bool _hidePt = false;
-  bool _userDragging = false;
+  DateTime? _lastUserDragAt;
   double _rate = 0.45; // 0.30 = 0.75x, 0.45 = 1.0x, 0.58 = 1.25x
   int _runId = 0;
   Timer? _fallbackWordTimer;
@@ -1371,36 +1372,55 @@ class _StoryScreenState extends State<StoryScreen> {
     }
   }
 
-  /// Calm auto-scroll: ONLY scrolls when the active sentence approaches the bottom/top
-  /// edge of the screen, never when it's already comfortably visible or while user drags.
+  /// Smooth auto-scroll: keeps the page still while reading the upper/middle zone,
+  /// and glides smoothly to the upper third as soon as reading passes 60% of the screen.
   void _scrollToCurrent({bool force = false}) {
-    if (_userDragging && !force) return;
+    final userJustDragged = _lastUserDragAt != null &&
+        DateTime.now().difference(_lastUserDragAt!) <
+            const Duration(seconds: 2);
+    if (userJustDragged && !force) return;
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !_scrollCtrl.hasClients) return;
       final key = GlobalObjectKey('s_${_chap}_${_paraIdx}_$_sentIdx');
       final ctx = key.currentContext;
       if (ctx == null) {
-        if (_paraIdx == 0 && _sentIdx == 0 && _scrollCtrl.hasClients) {
-          _scrollCtrl.animateTo(0,
-              duration: T.fast, curve: T.curve);
-        }
+        final totalP = max(1, widget.b.chapters[_chap].paragraphs.length);
+        final approx = (_paraIdx / totalP) * _scrollCtrl.position.maxScrollExtent;
+        _scrollCtrl.jumpTo(approx.clamp(0.0, _scrollCtrl.position.maxScrollExtent));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final retryCtx = key.currentContext;
+          if (retryCtx != null) {
+            Scrollable.ensureVisible(
+              retryCtx,
+              alignment: 0.22,
+              duration: const Duration(milliseconds: 300),
+              curve: T.curve,
+            );
+          }
+        });
         return;
       }
+
       final box = ctx.findRenderObject() as RenderBox?;
-      if (box == null || !box.hasSize) return;
-      final scrollable = Scrollable.maybeOf(ctx);
-      final vpBox = scrollable?.context.findRenderObject() as RenderBox?;
-      if (vpBox != null && vpBox.hasSize && !force) {
-        final topInVp = box.localToGlobal(Offset.zero, ancestor: vpBox).dy;
-        final botInVp = topInVp + box.size.height;
-        final vpH = vpBox.size.height;
-        // Already comfortably visible in viewport -> keep page completely still!
-        if (topInVp >= vpH * 0.08 && botInVp <= vpH * 0.80) return;
+      final listBox = _listKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize || listBox == null || !listBox.hasSize) {
+        return;
       }
-      Scrollable.ensureVisible(
-        ctx,
-        alignment: 0.20,
-        duration: const Duration(milliseconds: 350),
+
+      final topY = box.localToGlobal(Offset.zero, ancestor: listBox).dy;
+      final botY = topY + box.size.height;
+      final vpH = listBox.size.height;
+
+      // Stay completely steady while sentence is in the comfortable upper/mid reading zone.
+      if (!force && topY >= vpH * 0.08 && botY <= vpH * 0.60) return;
+
+      final target = (_scrollCtrl.offset + topY - vpH * 0.22)
+          .clamp(0.0, _scrollCtrl.position.maxScrollExtent);
+      _scrollCtrl.animateTo(
+        target,
+        duration: const Duration(milliseconds: 380),
         curve: T.curve,
       );
     });
@@ -1717,15 +1737,19 @@ class _StoryScreenState extends State<StoryScreen> {
       body: Column(
         children: [
           Expanded(
-            child: NotificationListener<UserScrollNotification>(
-              onNotification: (n) {
-                _userDragging = n.direction != ScrollDirection.idle;
-                return false;
-              },
-              child: ListView.builder(
-                controller: _scrollCtrl,
-                scrollCacheExtent: const ScrollCacheExtent.pixels(700),
-                padding: const EdgeInsets.all(T.s4),
+            child: SizedBox.expand(
+              key: _listKey,
+              child: NotificationListener<ScrollUpdateNotification>(
+                onNotification: (n) {
+                  if (n.dragDetails != null) {
+                    _lastUserDragAt = DateTime.now();
+                  }
+                  return false;
+                },
+                child: ListView.builder(
+                  controller: _scrollCtrl,
+                  scrollCacheExtent: const ScrollCacheExtent.pixels(900),
+                  padding: const EdgeInsets.fromLTRB(T.s4, T.s4, T.s4, 320),
                 itemCount: chapter.paragraphs.length + 1,
                 itemBuilder: (context, index) {
                   if (index == 0) {
@@ -1806,6 +1830,7 @@ class _StoryScreenState extends State<StoryScreen> {
                 },
               ),
             ),
+          ),
           ),
           SafeArea(
             minimum: const EdgeInsets.fromLTRB(T.s4, T.s2, T.s4, T.s3),

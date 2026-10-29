@@ -81,14 +81,26 @@ class _HomeScreenState extends State<HomeScreen> {
               ]),
               const SizedBox(height: T.s5),
               Row(children: [
-                Expanded(child: Text('Últimas semanas', style: T.title)),
-                Text(
-                  '${store.days.values.where((d) => d.reviews > 0 || d.listenSec > 0).length} dias ativos',
-                  style: T.caption,
+                Expanded(child: Text('Calendário de atividade', style: T.title)),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: T.s2, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: T.sky,
+                    borderRadius: BorderRadius.circular(T.rSm),
+                  ),
+                  child: Text(
+                    '${store.days.values.where((d) => d.reviews > 0 || d.listenSec > 0).length} dias ativos',
+                    style: T.caption.copyWith(
+                        color: T.text, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ]),
               const SizedBox(height: T.s3),
-              GlassCard(child: _githubContributionsHeatmap(store.days)),
+              GlassCard(
+                padding: const EdgeInsets.all(T.s4),
+                child: _activityCalendar(store.days),
+              ),
             ],
           );
         },
@@ -108,13 +120,12 @@ class _HomeScreenState extends State<HomeScreen> {
         Text(label, style: T.secondary),
       ]);
 
-  /// Compact 5-week daily contributions chart (blue scale, includes Today live).
-  Widget _githubContributionsHeatmap(Map<String, Day> days) {
+  /// Expanded 5-week common calendar view (Seg..Dom columns x 5 week rows, blue scale, live Today).
+  Widget _activityCalendar(Map<String, Day> days) {
     final now = DateTime.now();
     final todayUtc = DateTime.utc(now.year, now.month, now.day);
     final todayKey = dayKey(todayUtc);
 
-    // Current week's Monday in UTC so DST never shifts calendar dates:
     final thisMonday =
         todayUtc.subtract(Duration(days: todayUtc.weekday - 1));
     const numWeeks = 5;
@@ -134,104 +145,148 @@ class _HomeScreenState extends State<HomeScreen> {
     String fmtListen(int s) =>
         s == 0 ? '0 min' : (s < 60 ? '${s}s' : '${s ~/ 60} min');
 
-    String wdShort(int wd) => switch (wd) {
-          1 => 'Seg',
-          2 => 'Ter',
-          3 => 'Qua',
-          4 => 'Qui',
-          5 => 'Sex',
-          6 => 'Sáb',
-          _ => 'Dom',
+    String monthName(int m) => switch (m) {
+          1 => 'Janeiro',
+          2 => 'Fevereiro',
+          3 => 'Março',
+          4 => 'Abril',
+          5 => 'Maio',
+          6 => 'Junho',
+          7 => 'Julho',
+          8 => 'Agosto',
+          9 => 'Setembro',
+          10 => 'Outubro',
+          11 => 'Novembro',
+          _ => 'Dezembro',
         };
 
-    const cell = 15.0;
-    const gap = 3.5;
+    const weekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+    final periodLabel = start.month == todayUtc.month
+        ? '${monthName(todayUtc.month)} ${todayUtc.year}'
+        : '${monthName(start.month)} – ${monthName(todayUtc.month)} ${todayUtc.year}';
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+    final metCount = days.entries.where((e) {
+      return metGoal(e.value, goalRev: store.goalRev, goalSec: store.goalSec);
+    }).length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Left: compact 5-week x 7-day matrix
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 22,
-              height: 7 * cell + 6 * gap,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Seg', style: T.caption.copyWith(fontSize: 9)),
-                  Text('Qua', style: T.caption.copyWith(fontSize: 9)),
-                  Text('Sex', style: T.caption.copyWith(fontSize: 9)),
-                  Text('Dom', style: T.caption.copyWith(fontSize: 9)),
-                ],
+        // Calendar top bar: Month range + total goals met
+        Row(children: [
+          const Icon(CupertinoIcons.calendar, size: 17, color: T.text),
+          const SizedBox(width: T.s2),
+          Expanded(
+            child: Text(
+              periodLabel,
+              style: T.body.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+          ),
+          Text(
+            '$metCount ${metCount == 1 ? 'meta batida' : 'metas batidas'}',
+            style: T.caption,
+          ),
+        ]),
+        const SizedBox(height: T.s3),
+
+        // 7 Weekday column headers (Seg Ter Qua Qui Sex Sáb Dom)
+        Row(children: [
+          for (final label in weekdays)
+            Expanded(
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: T.caption.copyWith(fontWeight: FontWeight.w600),
               ),
             ),
-            for (var w = 0; w < numWeeks; w++)
-              Padding(
-                padding: EdgeInsets.only(right: w < numWeeks - 1 ? gap : 0),
-                child: Column(
-                  children: [
-                    for (var d = 0; d < 7; d++)
-                      Builder(builder: (_) {
-                        final day = start.add(Duration(days: w * 7 + d));
-                        final k = dayKey(day);
-                        final a = days[k];
-                        final isFuture = day.isAfter(todayUtc);
-                        final isToday = k == todayKey;
-                        final isSel = k == inspectedKey;
-                        final revs = a?.reviews ?? 0;
-                        final secs = a?.listenSec ?? 0;
-                        final hasActivity = revs > 0 || secs > 0;
-                        final isMet = metGoal(a,
-                            goalRev: store.goalRev, goalSec: store.goalSec);
-                        final isDouble = revs >= store.goalRev * 2 ||
-                            secs >= store.goalSec * 2;
+        ]),
+        const SizedBox(height: T.s2),
 
-                        final color = isFuture
-                            ? T.hairline
-                            : isDouble
-                                ? T.actHigh
-                                : isMet
-                                    ? T.actGoal
-                                    : hasActivity
-                                        ? T.actSome
-                                        : T.actNone;
+        // 5 Weeks x 7 Weekday columns (standard calendar layout)
+        for (var w = 0; w < numWeeks; w++)
+          Padding(
+            padding: EdgeInsets.only(bottom: w < numWeeks - 1 ? 6 : 0),
+            child: Row(children: [
+              for (var d = 0; d < 7; d++)
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 3),
+                    child: Builder(builder: (_) {
+                      final day = start.add(Duration(days: w * 7 + d));
+                      final k = dayKey(day);
+                      final a = days[k];
+                      final isFuture = day.isAfter(todayUtc);
+                      final isToday = k == todayKey;
+                      final isSel = k == inspectedKey;
+                      final revs = a?.reviews ?? 0;
+                      final secs = a?.listenSec ?? 0;
+                      final hasActivity = revs > 0 || secs > 0;
+                      final isMet = metGoal(a,
+                          goalRev: store.goalRev, goalSec: store.goalSec);
+                      final isDouble = revs >= store.goalRev * 2 ||
+                          secs >= store.goalSec * 2;
 
-                        return GestureDetector(
-                          onTap: isFuture
-                              ? null
-                              : () => setState(() => _selectedDay = day),
-                          child: Container(
-                            width: cell,
-                            height: cell,
-                            margin: EdgeInsets.only(bottom: d < 6 ? gap : 0),
-                            decoration: BoxDecoration(
-                              color: color,
-                              borderRadius: BorderRadius.circular(3.5),
-                              border: isToday
-                                  ? Border.all(color: T.text, width: 1.5)
-                                  : (isSel
-                                      ? Border.all(
-                                          color: T.actGoal, width: 1.5)
-                                      : null),
+                      final bgColor = isFuture
+                          ? T.hairline
+                          : isDouble
+                              ? T.actHigh
+                              : isMet
+                                  ? T.actGoal
+                                  : hasActivity
+                                      ? T.actSome
+                                      : T.actNone;
+
+                      final fgColor = isFuture
+                          ? T.textMuted.withValues(alpha: 0.45)
+                          : (isMet || isDouble ? T.onAccent : T.text);
+
+                      return GestureDetector(
+                        onTap: isFuture
+                            ? null
+                            : () => setState(() => _selectedDay = day),
+                        child: Container(
+                          height: 38,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: bgColor,
+                            borderRadius: BorderRadius.circular(T.rSm),
+                            border: isToday
+                                ? Border.all(color: T.text, width: 2)
+                                : (isSel
+                                    ? Border.all(color: T.actGoal, width: 1.5)
+                                    : null),
+                          ),
+                          child: Text(
+                            '${day.day}',
+                            style: T.caption.copyWith(
+                              color: fgColor,
+                              fontWeight: isToday || hasActivity
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
                             ),
                           ),
-                        );
-                      }),
-                  ],
+                        ),
+                      );
+                    }),
+                  ),
                 ),
-              ),
-          ],
-        ),
-        const SizedBox(width: T.s4),
+            ]),
+          ),
 
-        // Right: Live summary for Today (or tapped day) + compact legend
-        Expanded(
+        const SizedBox(height: T.s3),
+        const Divider(height: 1, thickness: 0.5, color: T.hairline),
+        const SizedBox(height: T.s3),
+
+        // Expanded selected day summary + blue legend
+        Container(
+          padding: const EdgeInsets.all(T.s3),
+          decoration: BoxDecoration(
+            color: T.bg,
+            borderRadius: BorderRadius.circular(T.rMd),
+            border: Border.all(color: T.hairline, width: 0.5),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Row(children: [
                 Icon(
@@ -240,47 +295,49 @@ class _HomeScreenState extends State<HomeScreen> {
                       : (inActive
                           ? CupertinoIcons.flame_fill
                           : CupertinoIcons.circle),
-                  size: 16,
+                  size: 18,
                   color: inMet
                       ? T.actGoal
                       : (inActive ? T.actSome : T.textMuted),
                 ),
-                const SizedBox(width: T.s1),
+                const SizedBox(width: T.s2),
                 Expanded(
                   child: Text(
                     isInspectingToday
-                        ? 'Hoje (${inspected.day.toString().padLeft(2, '0')}/${inspected.month.toString().padLeft(2, '0')})'
-                        : '${wdShort(inspected.weekday)}, ${inspected.day.toString().padLeft(2, '0')}/${inspected.month.toString().padLeft(2, '0')}',
-                    style: T.body
-                        .copyWith(fontSize: 15, fontWeight: FontWeight.w600),
-                    overflow: TextOverflow.ellipsis,
+                        ? 'Hoje (${weekdays[inspected.weekday - 1]}, ${inspected.day.toString().padLeft(2, '0')}/${inspected.month.toString().padLeft(2, '0')})'
+                        : '${weekdays[inspected.weekday - 1]}, ${inspected.day.toString().padLeft(2, '0')}/${inspected.month.toString().padLeft(2, '0')}',
+                    style:
+                        T.body.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                Text(
+                  inMet
+                      ? 'Meta concluída ✓'
+                      : (inActive ? 'Em progresso' : 'Sem atividade'),
+                  style: T.caption.copyWith(
+                    color: inMet ? T.actGoal : T.textMuted,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ]),
-              const SizedBox(height: T.s1),
-              Text(
-                '$inRevs revisões · ${fmtListen(inSecs)}',
-                style: T.secondary.copyWith(color: T.text, fontSize: 14),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                inMet
-                    ? 'Meta diária concluída!'
-                    : (inActive
-                        ? 'Progresso registrado hoje'
-                        : 'Sem atividade neste dia'),
-                style: T.caption,
-              ),
-              const SizedBox(height: T.s3),
+              const SizedBox(height: T.s2),
               Row(children: [
-                Text('Menos', style: T.caption.copyWith(fontSize: 10)),
-                const SizedBox(width: 4),
-                _legendSquare(T.actNone),
-                _legendSquare(T.actSome),
-                _legendSquare(T.actGoal),
-                _legendSquare(T.actHigh),
-                const SizedBox(width: 4),
-                Text('Mais', style: T.caption.copyWith(fontSize: 10)),
+                Expanded(
+                  child: Text(
+                    '$inRevs revisões · ${fmtListen(inSecs)} de áudio',
+                    style: T.secondary.copyWith(fontSize: 14),
+                  ),
+                ),
+                Row(children: [
+                  Text('Menos', style: T.caption.copyWith(fontSize: 11)),
+                  const SizedBox(width: 4),
+                  _legendSquare(T.actNone),
+                  _legendSquare(T.actSome),
+                  _legendSquare(T.actGoal),
+                  _legendSquare(T.actHigh),
+                  const SizedBox(width: 4),
+                  Text('Mais', style: T.caption.copyWith(fontSize: 11)),
+                ]),
               ]),
             ],
           ),
@@ -290,11 +347,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _legendSquare(Color c) => Container(
-        width: 9,
-        height: 9,
-        margin: const EdgeInsets.symmetric(horizontal: 1.5),
+        width: 10,
+        height: 10,
+        margin: const EdgeInsets.symmetric(horizontal: 2),
         decoration:
-            BoxDecoration(color: c, borderRadius: BorderRadius.circular(2)),
+            BoxDecoration(color: c, borderRadius: BorderRadius.circular(2.5)),
       );
 
   void _settings(BuildContext context) => showModalBottomSheet(
