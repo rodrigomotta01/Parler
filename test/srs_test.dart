@@ -84,6 +84,29 @@ void main() {
     expect(chunks.join(' '), long);
   });
 
+  test('naturalSentences: groups visual chunks into full sentences for continuous TTS', () {
+    const long = 'Au loin, la Seine coulait lentement vers Rouen, large et paisible '
+        'sous la lumière dorée du matin, tandis que les oiseaux chantaient '
+        'dans les grands arbres du jardin et que le vent se levait doucement.';
+    final chunks = splitSentences(long);
+    final nat = naturalSentences(long);
+
+    // Visually split into > 2 chunks, but spoken as 1 continuous natural sentence
+    expect(chunks.length, greaterThan(2));
+    expect(nat.length, 1);
+    expect(nat[0].fullText, long);
+    expect(nat[0].chunkIndices, [for (var i = 0; i < chunks.length; i++) i]);
+
+    // Multiple sentences in a paragraph
+    const multi = 'Aujourd\'hui, maman est morte. Ou peut-être hier, je ne sais pas.';
+    final multiNat = naturalSentences(multi);
+    final multiChunks = splitSentences(multi);
+    expect(multiNat.length, 2);
+    expect(multiNat[0].fullText, 'Aujourd\'hui, maman est morte.');
+    expect(multiNat[1].fullText, 'Ou peut-être hier, je ne sais pas.');
+    expect(multiNat.expand((n) => n.chunkIndices).toList(), [for (var i = 0; i < multiChunks.length; i++) i]);
+  });
+
   test('parseEbookBytes: parses .epub with embedded image and .pdf document', () {
     // 1. EPUB with image + 2 paragraphs
     final arch = Archive();

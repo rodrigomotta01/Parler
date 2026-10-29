@@ -212,6 +212,90 @@ void _pushClause(List<String> out, String s) {
 List<String> sentenceWords(String sent) =>
     sent.split(' ').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
 
+/// A natural sentence (terminated by `. ! ? …`) composed of 1 or more readable visual chunks.
+class NaturalSentence {
+  final String fullText;
+  final List<int> chunkIndices;
+  final List<List<String>> chunkWords;
+
+  const NaturalSentence({
+    required this.fullText,
+    required this.chunkIndices,
+    required this.chunkWords,
+  });
+}
+
+/// Splits a paragraph into full natural sentences for continuous audio playback,
+/// mapping them back to the individual visual chunk indices from [splitSentences].
+List<NaturalSentence> naturalSentences(String para) {
+  final raw = para.replaceAll(RegExp(r'[\u00A0\u202F\t]+'), ' ').trim();
+  if (raw.isEmpty) return const [];
+  if (raw.startsWith('[[IMG:')) {
+    return [
+      NaturalSentence(
+        fullText: raw,
+        chunkIndices: const [0],
+        chunkWords: [sentenceWords(raw)],
+      )
+    ];
+  }
+
+  final out = <NaturalSentence>[];
+  var chunkCursor = 0;
+
+  void addCand(String cand) {
+    final candChunks = <String>[];
+    _pushClause(candChunks, cand);
+    final indices = <int>[];
+    final wordsList = <List<String>>[];
+    for (final c in candChunks) {
+      indices.add(chunkCursor++);
+      wordsList.add(sentenceWords(c));
+    }
+    out.add(NaturalSentence(
+      fullText: cand,
+      chunkIndices: indices,
+      chunkWords: wordsList,
+    ));
+  }
+
+  for (final line in raw.split(RegExp(r'\r?\n+'))) {
+    for (final turn
+        in line.split(RegExp(r'\s+(?=[—–]\s*[A-ZÀ-ÖØ-ÞŒ«"])'))) {
+      final clean = turn.trim();
+      if (clean.isEmpty) continue;
+      var start = 0;
+      for (final m in _sentTermRe.allMatches(clean)) {
+        final punctEnd = m.start + m.group(1)!.length;
+        final cand = clean.substring(start, punctEnd).trim();
+        if (cand.isEmpty || _abbrevEndRe.hasMatch(cand)) continue;
+        if (cand.endsWith('»') && m.end < clean.length) {
+          final nextCh = clean.substring(m.end, m.end + 1);
+          if (RegExp(r'[a-zà-öø-ÿ]').hasMatch(nextCh)) continue;
+        }
+        addCand(cand);
+        start = m.end;
+      }
+      if (start < clean.length) {
+        final rem = clean.substring(start).trim();
+        if (rem.isNotEmpty) addCand(rem);
+      }
+    }
+  }
+
+  if (out.isEmpty) {
+    final fallbackChunks = splitSentences(raw);
+    return [
+      NaturalSentence(
+        fullText: raw,
+        chunkIndices: [for (var i = 0; i < fallbackChunks.length; i++) i],
+        chunkWords: [for (final c in fallbackChunks) sentenceWords(c)],
+      )
+    ];
+  }
+  return out;
+}
+
 String _encodeImageToken(Uint8List bytes, {String? mediaDir, String tag = 'img'}) {
   if (mediaDir != null && mediaDir.isNotEmpty) {
     try {
@@ -1045,6 +1129,9 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
     final hasCursor = widget.activeSentIdx != null;
 
     return Container(
+      key: widget.keyPrefix != null
+          ? GlobalObjectKey('para_${widget.keyPrefix}')
+          : null,
       margin: const EdgeInsets.only(bottom: T.s4),
       padding: const EdgeInsets.all(T.s3),
       decoration: BoxDecoration(
@@ -1307,7 +1394,8 @@ class _StoryScreenState extends State<StoryScreen> {
   int _runId = 0;
   Timer? _fallbackWordTimer;
   bool _nativeProgressSeen = false;
-  int _ttsWordOffset = 0;
+  List<(int chunkIdx, int wordIdx, int charStart, int charEnd)>
+      _currentSpokenTokens = [];
 
   int get _paraIdx => _cursor.value.para;
   int get _sentIdx => _cursor.value.sent;
@@ -1357,23 +1445,13 @@ class _StoryScreenState extends State<StoryScreen> {
       _nativeProgressSeen = true;
       _fallbackWordTimer?.cancel();
 
-      final paras = widget.b.chapters[_chap].paragraphs;
-      if (_paraIdx >= paras.length) return;
-      final sents = splitSentences(paras[_paraIdx]);
-      if (_sentIdx >= sents.length) return;
-      final words = sentenceWords(sents[_sentIdx]);
-
-      var charAcc = 0;
-      final effectiveStart = startOffset + _ttsWordOffset;
-      for (var t = 0; t < words.length; t++) {
-        final tokLen = words[t].length;
-        if (effectiveStart >= charAcc && effectiveStart <= charAcc + tokLen) {
-          if (t > _wordIdx || (t == 0 && _wordIdx == 0)) {
-            _updateCursor(word: t);
+      for (final tok in _currentSpokenTokens) {
+        if (startOffset >= tok.$3 && startOffset <= tok.$4) {
+          if (tok.$1 != _sentIdx || tok.$2 != _wordIdx) {
+            _updateCursor(sent: tok.$1, word: tok.$2);
           }
           break;
         }
-        charAcc += tokLen + 1;
       }
     });
   }
@@ -1400,10 +1478,10 @@ class _StoryScreenState extends State<StoryScreen> {
     }
   }
 
-  /// Auto-scroll that follows the active sentence: stays still while it sits in the
-  /// upper ~60% of the viewport, otherwise glides it to ~18% from the top. Re-checks
-  /// itself after each glide (heights change when translations load) and retries
-  /// when the target row has not been built yet by the lazy list.
+  /// Auto-scroll that ensures text starts cleanly below the top section:
+  /// stays completely still while the active sentence is comfortably in view (between 16px
+  /// and 72% of the viewport) and the paragraph top is not clipped off-screen.
+  /// When it scrolls, it aligns the entire active paragraph to start cleanly below the top.
   void _scrollToCurrent({bool force = false, int attempt = 0}) {
     final justDragged = _lastUserDragAt != null &&
         DateTime.now().difference(_lastUserDragAt!) < const Duration(seconds: 2);
@@ -1412,10 +1490,9 @@ class _StoryScreenState extends State<StoryScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollCtrl.hasClients || _scrollBusy) return;
       final pos = _scrollCtrl.position;
-      final ctx =
+      final sentCtx =
           GlobalObjectKey('s_${_chap}_${_paraIdx}_$_sentIdx').currentContext;
-      if (ctx == null) {
-        // Row not built yet: jump close to it, then retry (max 5 times).
+      if (sentCtx == null) {
         if (attempt >= 5) return;
         final total = max(1, widget.b.chapters[_chap].paragraphs.length);
         _scrollCtrl.jumpTo(
@@ -1423,26 +1500,67 @@ class _StoryScreenState extends State<StoryScreen> {
         _scrollToCurrent(force: force, attempt: attempt + 1);
         return;
       }
-      final box = ctx.findRenderObject() as RenderBox?;
+      final sentBox = sentCtx.findRenderObject() as RenderBox?;
       final listBox = _listKey.currentContext?.findRenderObject() as RenderBox?;
-      if (box == null || !box.hasSize || listBox == null || !listBox.hasSize) {
+      if (sentBox == null || !sentBox.hasSize || listBox == null || !listBox.hasSize) {
         return;
       }
-      final topY = box.localToGlobal(Offset.zero, ancestor: listBox).dy;
-      final botY = topY + box.size.height;
-      final vpH = listBox.size.height;
-      if (!force && topY >= vpH * 0.05 && botY <= vpH * 0.62) return;
 
-      final target =
-          (pos.pixels + topY - vpH * 0.18).clamp(0.0, pos.maxScrollExtent);
+      final paraCtx =
+          GlobalObjectKey('para_s_${_chap}_$_paraIdx').currentContext;
+      final paraBox = paraCtx?.findRenderObject() as RenderBox?;
+
+      final vpH = listBox.size.height;
+      final sentTop = sentBox.localToGlobal(Offset.zero, ancestor: listBox).dy;
+      final sentBot = sentTop + sentBox.size.height;
+      final paraTop = (paraBox != null && paraBox.hasSize)
+          ? paraBox.localToGlobal(Offset.zero, ancestor: listBox).dy
+          : sentTop;
+
+      const safeTopMargin = 16.0;
+      final safeBotMargin = vpH * 0.72;
+
+      // When not forced: if the active sentence is comfortably in view
+      // and the paragraph card top is not clipped off-screen, keep page steady.
+      if (!force &&
+          sentTop >= safeTopMargin &&
+          sentBot <= safeBotMargin &&
+          paraTop >= 0.0) {
+        return;
+      }
+
+      // If at first paragraph of chapter, prefer keeping offset at 0 if sentence is visible
+      if (_paraIdx == 0 && pos.pixels < 8 && sentBot <= safeBotMargin && !force) {
+        return;
+      }
+
+      // Calculate target so the active paragraph (or sentence) starts cleanly below the top section
+      double target;
+      if (_paraIdx == 0 && sentTop < vpH * 0.50) {
+        // Near the beginning of chapter: stay at top header
+        target = 0.0;
+      } else {
+        // Position paragraph top cleanly below the top section
+        final targetForPara = pos.pixels + paraTop - safeTopMargin;
+        final projectedSentBot = sentBot - (paraTop - safeTopMargin);
+
+        if (projectedSentBot <= safeBotMargin) {
+          target = targetForPara;
+        } else {
+          // Paragraph is taller than 70% of screen: align sentence at 22% from top
+          target = pos.pixels + sentTop - vpH * 0.22;
+        }
+      }
+
+      target = target.clamp(0.0, pos.maxScrollExtent);
       if ((target - pos.pixels).abs() < 4) return;
+
       _scrollBusy = true;
       _scrollCtrl
           .animateTo(target,
               duration: const Duration(milliseconds: 380), curve: T.curve)
           .whenComplete(() {
         _scrollBusy = false;
-        if (mounted && _playing) _scrollToCurrent();
       });
     });
   }
@@ -1474,48 +1592,79 @@ class _StoryScreenState extends State<StoryScreen> {
       if (paras[p].startsWith('[[IMG:') || paras[p].startsWith('[[PDFPAGE:')) {
         continue;
       }
-      final sents = splitSentences(paras[p]);
-      if (sents.isEmpty) continue;
-      final startS = (p == _paraIdx) ? _sentIdx.clamp(0, sents.length - 1) : 0;
 
-      for (var s = startS; s < sents.length; s++) {
+      final natSents = naturalSentences(paras[p]);
+      if (natSents.isEmpty) continue;
+
+      var startNat = 0;
+      var startChunkInNat = 0;
+      var startW = 0;
+
+      if (p == _paraIdx) {
+        for (var ni = 0; ni < natSents.length; ni++) {
+          final idx = natSents[ni].chunkIndices.indexOf(_sentIdx);
+          if (idx != -1) {
+            startNat = ni;
+            startChunkInNat = idx;
+            startW = _wordIdx;
+            break;
+          }
+        }
+      }
+
+      for (var ni = startNat; ni < natSents.length; ni++) {
         if (!mounted || _runId != myRun || !_playing) return;
-        final words = sentenceWords(sents[s]);
-        if (words.isEmpty) continue;
-        var startW = (p == _paraIdx && s == _sentIdx)
-            ? _wordIdx.clamp(0, words.length - 1)
-            : 0;
+        final nat = natSents[ni];
+        final localChunk = (p == _paraIdx && ni == startNat) ? startChunkInNat : 0;
+        final wordInChunk = (p == _paraIdx && ni == startNat) ? startW : 0;
 
-        var speakText = words.skip(startW).join(' ');
-        // If paused at trailing punctuation, restart sentence cleanly or skip empty punctuation.
-        if (!wordRe.hasMatch(speakText)) {
-          if (startW > 0 && wordRe.hasMatch(sents[s])) {
-            startW = 0;
-            speakText = sents[s];
-          } else {
-            continue;
+        final tokens = <(int chunkIdx, int wordIdx, int charStart, int charEnd)>[];
+        final textParts = <String>[];
+        var charAcc = 0;
+
+        for (var ci = localChunk; ci < nat.chunkIndices.length; ci++) {
+          final cIdx = nat.chunkIndices[ci];
+          final words = nat.chunkWords[ci];
+          final wStart = (ci == localChunk)
+              ? wordInChunk.clamp(0, words.isEmpty ? 0 : words.length - 1)
+              : 0;
+
+          for (var wi = wStart; wi < words.length; wi++) {
+            final tok = words[wi];
+            if (textParts.isNotEmpty) {
+              charAcc += 1;
+            }
+            final sStart = charAcc;
+            final sEnd = sStart + tok.length;
+            charAcc = sEnd;
+            textParts.add(tok);
+            tokens.add((cIdx, wi, sStart, sEnd));
           }
         }
 
-        _updateCursor(para: p, sent: s, word: startW, playing: true);
+        if (tokens.isEmpty || textParts.isEmpty) continue;
+        final speakText = textParts.join(' ');
+        if (!wordRe.hasMatch(speakText)) continue;
+
+        _currentSpokenTokens = tokens;
+        final firstTok = tokens.first;
+        _updateCursor(para: p, sent: firstTok.$1, word: firstTok.$2, playing: true);
         await _saveCursor(notify: false);
         _scrollToCurrent();
-
-        _ttsWordOffset = words.take(startW).join(' ').length;
-        if (_ttsWordOffset > 0) _ttsWordOffset += 1;
 
         _fallbackWordTimer?.cancel();
         _nativeProgressSeen = false;
         final msPerWord = (_rate == 0.30 ? 550 : (_rate == 0.58 ? 280 : 380));
-        var simulatedWord = startW;
+        var tokenIdx = 0;
         _fallbackWordTimer =
             Timer.periodic(Duration(milliseconds: msPerWord), (tm) {
           if (!mounted || _runId != myRun || !_playing || _nativeProgressSeen) {
             tm.cancel();
             return;
           }
-          if (++simulatedWord < words.length) {
-            _updateCursor(word: simulatedWord);
+          if (++tokenIdx < tokens.length) {
+            final tok = tokens[tokenIdx];
+            _updateCursor(sent: tok.$1, word: tok.$2);
           } else {
             tm.cancel();
           }
