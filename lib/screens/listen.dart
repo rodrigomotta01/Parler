@@ -1517,15 +1517,16 @@ class _StoryScreenState extends State<StoryScreen> {
           ? paraBox.localToGlobal(Offset.zero, ancestor: listBox).dy
           : sentTop;
 
-      const safeTopMargin = 16.0;
-      final safeBotMargin = vpH * 0.72;
+      final topDisplacement = max(200.0, vpH * 0.35);
+      const minSafeTop = 48.0;
+      final safeBotMargin = vpH * 0.70;
 
       // When not forced: if the active sentence is comfortably in view
       // and the paragraph card top is not clipped off-screen, keep page steady.
       if (!force &&
-          sentTop >= safeTopMargin &&
+          sentTop >= minSafeTop &&
           sentBot <= safeBotMargin &&
-          paraTop >= 0.0) {
+          paraTop >= minSafeTop) {
         return;
       }
 
@@ -1534,21 +1535,27 @@ class _StoryScreenState extends State<StoryScreen> {
         return;
       }
 
-      // Calculate target so the active paragraph (or sentence) starts cleanly below the top section
+      // Calculate target so the active paragraph (or sentence) lands comfortably further down
+      // below the top section (at ~35% of the viewport, well below the header).
       double target;
-      if (_paraIdx == 0 && sentTop < vpH * 0.50) {
+      if (_paraIdx == 0 && sentTop < vpH * 0.45) {
         // Near the beginning of chapter: stay at top header
         target = 0.0;
       } else {
-        // Position paragraph top cleanly below the top section
-        final targetForPara = pos.pixels + paraTop - safeTopMargin;
-        final projectedSentBot = sentBot - (paraTop - safeTopMargin);
+        // Position paragraph top cleanly further down below the top section
+        final targetForPara = pos.pixels + paraTop - topDisplacement;
+        final projectedSentBot = sentBot - (paraTop - topDisplacement);
 
         if (projectedSentBot <= safeBotMargin) {
           target = targetForPara;
         } else {
-          // Paragraph is taller than 70% of screen: align sentence at 22% from top
-          target = pos.pixels + sentTop - vpH * 0.22;
+          // Paragraph is tall: align the active sentence at topDisplacement
+          target = pos.pixels + sentTop - topDisplacement;
+          // But never allow the paragraph top to be pushed into the top section (< minSafeTop)
+          final maxScrollAllowed = pos.pixels + paraTop - minSafeTop;
+          if (target > maxScrollAllowed) {
+            target = maxScrollAllowed;
+          }
         }
       }
 
