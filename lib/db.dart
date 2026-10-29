@@ -1,4 +1,5 @@
 // Data: read-only vocab (assets/vocab.json, in memory) + progress (user.db).
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -73,6 +74,9 @@ class Store extends ChangeNotifier {
   final settings = <String, String>{};
   final cardIds = <int>{};
   final _trCache = <String, String>{};
+  final _trInflight = <String, Future<String>>{};
+  final _trWaiters = <Completer<void>>[];
+  int _trActive = 0;
   List<UserBook> ebooks = [];
   Map<String, Day> days = {};
 
@@ -162,30 +166,61 @@ class Store extends ChangeNotifier {
     return s;
   }
 
+  /// Synchronous lookup of an already-cached translation (prevents UI height flicker).
+  String? cachedTranslation(String fr) => _trCache[fr.trim()];
+
   /// Translates a French sentence/definition/paragraph to PT-BR, cached in SQLite.
-  Future<String> translate(String fr) async {
+  /// Deduplicates in-flight calls and caps concurrency at 3 to prevent rate-limiting.
+  Future<String> translate(String fr) {
     final key = fr.trim();
-    if (key.isEmpty) return '';
-    if (_trCache[key] case final hit?) return hit;
-    try {
-      final uri = Uri.https('translate.googleapis.com', '/translate_a/single', {
-        'client': 'gtx',
-        'sl': 'fr',
-        'tl': 'pt',
-        'dt': 't',
-        'q': key,
-      });
-      final res = await http.get(uri);
-      if (res.statusCode != 200) return '';
-      final data = jsonDecode(utf8.decode(res.bodyBytes)) as List;
-      final pt = (data[0] as List).map((s) => (s as List)[0] as String).join();
-      _trCache[key] = pt;
-      await _db.insert('translations', {'fr': key, 'pt': pt},
-          conflictAlgorithm: ConflictAlgorithm.replace);
-      return pt;
-    } catch (_) {
-      return '';
-    }
+    if (key.isEmpty) return Future.value('');
+    if (_trCache[key] case final hit?) return Future.value(hit);
+    return _trInflight.putIfAbsent(key, () async {
+      if (_trActive >= 3) {
+        final w = Completer<void>();
+        _trWaiters.add(w);
+        await w.future;
+      }
+      _trActive++;
+      try {
+        final uri =
+            Uri.https('translate.googleapis.com', '/translate_a/single', {
+          'client': 'gtx',
+          'sl': 'fr',
+          'tl': 'pt',
+          'dt': 't',
+          'q': key,
+        });
+        for (var attempt = 0; attempt < 2; attempt++) {
+          try {
+            final res = await http.get(uri).timeout(const Duration(seconds: 8));
+            if (res.statusCode == 200) {
+              final data = jsonDecode(utf8.decode(res.bodyBytes)) as List;
+              final pt = (data[0] as List)
+                  .map((s) => (s as List)[0] as String)
+                  .join()
+                  .trim();
+              if (pt.isNotEmpty) {
+                _trCache[key] = pt;
+                await _db.insert('translations', {'fr': key, 'pt': pt},
+                    conflictAlgorithm: ConflictAlgorithm.replace);
+              }
+              return pt;
+            }
+          } catch (_) {}
+          if (attempt == 0) {
+            await Future.delayed(const Duration(milliseconds: 350));
+          }
+        }
+        return '';
+      } finally {
+        _trInflight.remove(key);
+        _trActive--;
+        if (_trWaiters.isNotEmpty) {
+          _trWaiters.removeAt(0).complete();
+        }
+      }
+    });
   }
 
   Future<void> _loadEbooks() async {
@@ -231,7 +266,7 @@ class Store extends ChangeNotifier {
   }
 
   Future<void> updateEbookProgress(int id, int chapterIdx, int paraIdx,
-      [int sentIdx = 0, int wordIdx = 0]) async {
+      [int sentIdx = 0, int wordIdx = 0, bool notify = true]) async {
     await _db.update(
       'ebooks',
       {
@@ -243,8 +278,21 @@ class Store extends ChangeNotifier {
       where: 'id = ?',
       whereArgs: [id],
     );
-    await _loadEbooks();
-    notifyListeners();
+    final idx = ebooks.indexWhere((b) => b.id == id);
+    if (idx != -1) {
+      final b = ebooks[idx];
+      ebooks[idx] = (
+        id: b.id,
+        title: b.title,
+        level: b.level,
+        chapters: b.chapters,
+        chapterIdx: chapterIdx,
+        paraIdx: paraIdx,
+        sentIdx: sentIdx,
+        wordIdx: wordIdx,
+      );
+    }
+    if (notify) notifyListeners();
   }
 
   Set<String> get grammarDone =>

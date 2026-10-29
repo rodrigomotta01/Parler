@@ -8,6 +8,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:html/parser.dart' as html;
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
@@ -43,8 +44,8 @@ final builtInBooks = <UserBook>[
         paragraphs: [
           'Il est huit heures du matin à Paris. Le soleil brille doucement sur la rue calme.',
           'Marie entre dans une petite boulangerie près de chez elle. Elle commande un croissant chaud et un café au lait.',
-          'Elle s’assoit à une table près de la fenêtre pour lire le journal et regarder les passants.',
-          'Le serveur lui sourit et lui souhaite une bonne journée avant son travail.',
+          'Elle s’assoit à une table près de la fenêtre. Elle ouvre son journal et regarde les passants dans la rue.',
+          'Le serveur lui apporte sa tasse fumante avec un grand sourire. Il lui souhaite une très bonne journée avant son travail.',
         ],
       ),
     ],
@@ -61,10 +62,10 @@ final builtInBooks = <UserBook>[
       (
         title: 'Chapitre unique',
         paragraphs: [
-          'Cet été, nous avons décidé de passer nos vacances dans un petit village en Provence.',
-          'Chaque matin, nous marchons jusqu’au marché pour acheter des fruits frais, du fromage de chèvre et du pain.',
-          'L’après-midi, l’air sent la lavande et les cigales chantent dans les oliviers pendant des heures.',
-          'Le soir, les habitants se retrouvent sur la place centrale pour discuter et jouer à la pétanque.',
+          'Cet été, nous avons décidé de passer nos vacances en Provence. Nous logeons dans un petit village entouré de collines.',
+          'Chaque matin, nous marchons jusqu’au marché du village. Nous achetons des fruits frais, du fromage de chèvre et du pain chaud.',
+          'L’après-midi, l’air sent bon la lavande sous le soleil. Les cigales chantent dans les oliviers pendant des heures.',
+          'Le soir, les habitants se retrouvent sur la place centrale. Tout le monde discute gaiement et joue à la pétanque.',
         ],
       ),
     ],
@@ -81,10 +82,10 @@ final builtInBooks = <UserBook>[
       (
         title: 'Extrait',
         paragraphs: [
-          'Ce matin-là, j’étais très en retard pour aller à l’école, et j’avais grand-peur d’être grondé.',
+          'Ce matin-là, j’étais très en retard pour aller à l’école. J’avais grand-peur d’être grondé par M. Hamel.',
           'Il faisait si chaud, si clair ! On entendait les merles siffler à la lisière du bois.',
-          'En entrant dans la classe, j’ai remarqué un calme extraordinaire : tout le village était assis au fond de la salle.',
-          'Monsieur Hamel nous a parlé de la langue française, disant que c’était la plus belle langue du monde, la plus claire et la plus solide.',
+          'En entrant dans la classe, j’ai remarqué un calme extraordinaire : tout le village était assis en silence au fond de la salle.',
+          'Monsieur Hamel nous a parlé avec émotion de la langue française. Il disait que c’était la plus belle langue du monde, la plus claire et la plus solide.',
         ],
       ),
     ],
@@ -102,8 +103,8 @@ final builtInBooks = <UserBook>[
         title: 'Journal — 8 mai',
         paragraphs: [
           'Quelle journée admirable ! J’ai passé toute la matinée étendu sur l’herbe, devant ma maison, sous l’énorme platane qui la couvre et l’abrite.',
-          'J’aime ce pays, et j’aime y vivre parce que j’y ai mes racines, ces profondes et délicates racines qui attachent un homme à la terre où sont nés et morts ses aïeux.',
-          'Au loin, la Seine coulait lentement vers Rouen, large et paisible sous la lumière dorée du matin.',
+          'J’aime ce pays profondément, et j’aime y vivre. J’y ai mes racines, ces délicates racines qui attachent un homme à la terre de ses aïeux.',
+          'Au loin, la Seine coulait lentement vers Rouen. Le fleuve semblait large et paisible sous la lumière dorée du matin.',
         ],
       ),
     ],
@@ -131,18 +132,57 @@ final builtInBooks = <UserBook>[
   return (curPage, totalPages);
 }
 
+final _abbrevEndRe =
+    RegExp(r'\b(?:M|Mr|Mme|Mlle|Dr|St|cf|etc)\.$', caseSensitive: false);
+final _sentTermRe = RegExp(
+  r'([.!?…;]+(?:\s*["”’»)\]])*)(\s+|(?=[A-ZÀ-ÖØ-ÞŒ«"“—–]))',
+);
+
 /// Splits a paragraph into individual French sentences while keeping image markers intact.
 List<String> splitSentences(String para) {
-  final clean = para.trim();
-  if (clean.isEmpty) return const [];
-  if (clean.startsWith('[[IMG:')) return [clean];
-  final parts = clean
-      .split(RegExp(
-          r'(?<!\b(?:M|Mr|Mme|Mlle|Dr|St|cf|etc)\.)(?<=[.!?…»])\s+'))
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
-  return parts.isEmpty ? [clean] : parts;
+  final raw = para.replaceAll(RegExp(r'[\u00A0\u202F\t]+'), ' ').trim();
+  if (raw.isEmpty) return const [];
+  if (raw.startsWith('[[IMG:')) return [raw];
+
+  final out = <String>[];
+  for (final line in raw.split(RegExp(r'\r?\n+'))) {
+    // Split dialogue turns inside a single line (e.g. "Bonjour. — Salut !").
+    for (final turn
+        in line.split(RegExp(r'\s+(?=[—–]\s*[A-ZÀ-ÖØ-ÞŒ«"])'))) {
+      final clean = turn.trim();
+      if (clean.isEmpty) continue;
+      var start = 0;
+      for (final m in _sentTermRe.allMatches(clean)) {
+        final punctEnd = m.start + m.group(1)!.length;
+        final cand = clean.substring(start, punctEnd).trim();
+        if (cand.isEmpty || _abbrevEndRe.hasMatch(cand)) continue;
+        // Keep dialogue attribution attached (e.g. « Bonjour ! » dit-il.).
+        if (cand.endsWith('»') && m.end < clean.length) {
+          final nextCh = clean.substring(m.end, m.end + 1);
+          if (RegExp(r'[a-zà-öø-ÿ]').hasMatch(nextCh)) continue;
+        }
+        _pushClause(out, cand);
+        start = m.end;
+      }
+      if (start < clean.length) {
+        final rem = clean.substring(start).trim();
+        if (rem.isNotEmpty) _pushClause(out, rem);
+      }
+    }
+  }
+  return out.isEmpty ? [raw] : out;
+}
+
+void _pushClause(List<String> out, String s) {
+  if (s.length > 65 && s.contains(': ')) {
+    final idx = s.indexOf(': ');
+    if (idx >= 22 && s.length - idx >= 18) {
+      out.add(s.substring(0, idx + 1).trim());
+      out.add(s.substring(idx + 2).trim());
+      return;
+    }
+  }
+  out.add(s);
 }
 
 List<String> sentenceWords(String sent) =>
@@ -324,7 +364,13 @@ String _encodeImageToken(Uint8List bytes, {String? mediaDir, String tag = 'img'}
                 }
               }
             }
-            final t = el.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+            for (final br in el.querySelectorAll('br')) {
+              br.replaceWith(html.parseFragment('\n'));
+            }
+            final t = el.text
+                .replaceAll(RegExp(r'[ \t\u00A0\u202F]+'), ' ')
+                .replaceAll(RegExp(r' *\n *'), '\n')
+                .trim();
             if (t.length > 1) paras.add(t);
           }
         }
@@ -859,16 +905,82 @@ class _ListenScreenState extends State<ListenScreen> {
       ];
 }
 
+typedef PlayCursor = ({int para, int sent, int word, bool playing});
+
+/// Stable per-sentence translation widget: reads synchronous cache first so
+/// rebuilds never collapse/expand layout height.
+class _SentenceTranslation extends StatefulWidget {
+  const _SentenceTranslation(this.sent);
+  final String sent;
+
+  @override
+  State<_SentenceTranslation> createState() => _SentenceTranslationState();
+}
+
+class _SentenceTranslationState extends State<_SentenceTranslation> {
+  String? _pt;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncOrFetch();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SentenceTranslation oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sent != widget.sent) _syncOrFetch();
+  }
+
+  void _syncOrFetch() {
+    final hit = store.cachedTranslation(widget.sent);
+    if (hit != null && hit.isNotEmpty) {
+      _pt = hit;
+      _loading = false;
+    } else {
+      _pt = null;
+      _fetch();
+    }
+  }
+
+  Future<void> _fetch() async {
+    setState(() => _loading = true);
+    final res = await store.translate(widget.sent);
+    if (!mounted) return;
+    setState(() {
+      _pt = res;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pt = _pt ?? store.cachedTranslation(widget.sent);
+    if (pt != null && pt.isNotEmpty) {
+      return Text(pt, style: T.secondary.copyWith(height: 1.35));
+    }
+    if (_loading) {
+      return Text('Traduzindo frase…', style: T.caption);
+    }
+    return GestureDetector(
+      onTap: _fetch,
+      child: Text('Toque para traduzir em PT-BR', style: T.caption),
+    );
+  }
+}
+
 /// Interactive paragraph section:
 /// - Renders inline book images (`[[IMG:...]]`) with pinch-to-zoom on tap.
 /// - Groups sentences of a paragraph inside one section, displaying the PT-BR translation
-///   immediately below each French sentence.
-/// - In the actively playing sentence, words are highlighted in real time (Spotify Lyrics style).
+///   immediately below each individual French sentence.
+/// - Constant-geometry Spotify Lyrics word highlighting (zero layout reflow / scroll jitter).
 class BilingualParagraph extends StatefulWidget {
   const BilingualParagraph(
     this.text, {
     super.key,
     required this.onTapWord,
+    this.onLongPressWord,
     this.showAudio = false,
     this.activeSentIdx,
     this.activeWordIdx,
@@ -879,6 +991,7 @@ class BilingualParagraph extends StatefulWidget {
   });
   final String text;
   final ValueChanged<String> onTapWord;
+  final void Function(int sentIdx, int wordIdx)? onLongPressWord;
   final bool showAudio;
   final int? activeSentIdx;
   final int? activeWordIdx;
@@ -897,8 +1010,8 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
   @override
   Widget build(BuildContext context) {
     if (widget.text.startsWith('[[IMG:')) {
-      return _buildImage(context,
-          widget.text.substring(6, widget.text.length - 2));
+      return _buildImage(
+          context, widget.text.substring(6, widget.text.length - 2));
     }
     if (widget.text.startsWith('[[PDFPAGE:')) {
       return const SizedBox.shrink();
@@ -907,8 +1020,7 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
     final sentences = splitSentences(widget.text);
     final hasCursor = widget.activeSentIdx != null;
 
-    return AnimatedContainer(
-      duration: T.fast,
+    return Container(
       margin: const EdgeInsets.only(bottom: T.s4),
       padding: const EdgeInsets.all(T.s3),
       decoration: BoxDecoration(
@@ -1018,46 +1130,25 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
     final words = sentenceWords(sent);
     final curWord = isCurrent ? widget.activeWordIdx : null;
 
-    return AnimatedContainer(
-      duration: T.fast,
-      padding: isCurrent
-          ? const EdgeInsets.all(T.s2)
-          : const EdgeInsets.symmetric(vertical: 2),
+    // Constant padding across active/inactive states prevents line-wrap reflow!
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: T.s2, vertical: 6),
       decoration: isCurrent
           ? BoxDecoration(
               color: T.lavender
-                  .withValues(alpha: widget.isPlaying ? 0.35 : 0.18),
+                  .withValues(alpha: widget.isPlaying ? 0.28 : 0.14),
               borderRadius: BorderRadius.circular(T.rSm),
             )
           : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (isCurrent)
-            Padding(
-              padding: const EdgeInsets.only(bottom: T.s1),
-              child: Row(children: [
-                Icon(
-                  widget.isPlaying
-                      ? CupertinoIcons.speaker_2_fill
-                      : CupertinoIcons.pause_circle,
-                  size: 13,
-                  color: T.text,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  widget.isPlaying ? 'Reproduzindo agora' : 'Áudio pausado aqui',
-                  style: T.caption.copyWith(
-                      color: T.text, fontWeight: FontWeight.w600),
-                ),
-              ]),
-            ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (widget.showAudio)
                 Padding(
-                  padding: const EdgeInsets.only(right: T.s2, top: 3),
+                  padding: const EdgeInsets.only(right: T.s2, top: 4),
                   child: GestureDetector(
                     onTap: () {
                       if (widget.onTapSentenceAudio != null) {
@@ -1069,7 +1160,9 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
                     child: Icon(
                       isCurrent && widget.isPlaying
                           ? CupertinoIcons.speaker_2_fill
-                          : CupertinoIcons.speaker_2,
+                          : (isCurrent
+                              ? CupertinoIcons.pause_circle
+                              : CupertinoIcons.speaker_2),
                       size: 18,
                       color: isCurrent ? T.text : T.textMuted,
                     ),
@@ -1078,89 +1171,80 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
               Expanded(
                 child: Wrap(children: [
                   for (final (wIdx, t) in words.indexed)
-                    _spotifyWord(t, wIdx, curWord, isCurrent),
+                    _spotifyWord(t, sIdx, wIdx, curWord, isCurrent),
                 ]),
               ),
             ],
           ),
-          if (!showPt)
-            Padding(
-              padding: const EdgeInsets.only(top: T.s1),
-              child: GestureDetector(
-                onTap: () => setState(() => _revealedSents.add(sIdx)),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: T.s2, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: T.sky.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(T.rSm),
+          Padding(
+            padding: EdgeInsets.only(
+                left: widget.showAudio ? 26 : 0, top: 4),
+            child: !showPt
+                ? GestureDetector(
+                    onTap: () => setState(() => _revealedSents.add(sIdx)),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: T.s2, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: T.sky.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(T.rSm),
+                      ),
+                      child: Text('Toque para revelar a tradução PT-BR',
+                          style: T.caption),
+                    ),
+                  )
+                : Container(
+                    padding: const EdgeInsets.only(left: T.s2),
+                    decoration: const BoxDecoration(
+                      border: Border(
+                        left: BorderSide(color: T.lavender, width: 2),
+                      ),
+                    ),
+                    child: _SentenceTranslation(sent),
                   ),
-                  child: Text('Toque para revelar a tradução PT-BR',
-                      style: T.caption),
-                ),
-              ),
-            )
-          else
-            FutureBuilder<String>(
-              future: store.translate(sent),
-              builder: (_, snap) {
-                final pt = snap.data ?? '';
-                if (pt.isEmpty) return const SizedBox.shrink();
-                return Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(pt, style: T.secondary),
-                );
-              },
-            ),
+          ),
         ],
       ),
     );
   }
 
-  /// Spotify Lyrics / Apple Music Sing karaoke word renderer:
-  /// - Word spoken right now: boldest dark ink + pill highlight.
-  /// - Words already spoken: dark ink.
-  /// - Upcoming words: softer muted tone.
-  Widget _spotifyWord(String t, int wIdx, int? curWordIdx, bool isCurrent) {
+  /// Constant-geometry Spotify Lyrics word renderer:
+  /// Fixed padding & fontWeight so speaking a word never changes its width or wraps lines!
+  Widget _spotifyWord(
+      String t, int sIdx, int wIdx, int? curWordIdx, bool isCurrent) {
     final w = wordRe.hasMatch(t) ? store.vocab.lookup(t) : null;
     final saved = w != null && store.cardIds.contains(w.id);
 
     final isExactSpoken = isCurrent && curWordIdx != null && curWordIdx == wIdx;
-    final isAlreadySpoken = isCurrent && curWordIdx != null && wIdx < curWordIdx;
     final isUpcoming = isCurrent && curWordIdx != null && wIdx > curWordIdx;
 
-    final textColor = isExactSpoken
-        ? const Color(0xFF000000)
-        : (isAlreadySpoken
-            ? T.text
-            : (isUpcoming ? T.textMuted : T.text));
-
-    final fontWeight = isExactSpoken
-        ? FontWeight.w800
-        : (isAlreadySpoken ? FontWeight.w600 : FontWeight.w400);
+    final textColor = isUpcoming ? T.textMuted : T.text;
 
     return GestureDetector(
       onTap: wordRe.hasMatch(t) ? () => widget.onTapWord(t) : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        margin: const EdgeInsets.only(right: 4, bottom: 2),
-        padding: EdgeInsets.symmetric(
-            horizontal: isExactSpoken ? 3 : 1, vertical: isExactSpoken ? 1 : 0),
+      onLongPress: widget.onLongPressWord != null
+          ? () => widget.onLongPressWord!(sIdx, wIdx)
+          : null,
+      child: Container(
+        margin: const EdgeInsets.only(right: 3, bottom: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
         decoration: isExactSpoken
             ? BoxDecoration(
-                color: const Color(0xFFB5ACF0),
-                borderRadius: BorderRadius.circular(4))
+                color: T.lavender,
+                borderRadius: BorderRadius.circular(4),
+              )
             : (saved
                 ? BoxDecoration(
-                    color: T.lavender.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(4))
+                    color: T.butter.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(4),
+                  )
                 : null),
         child: Text(
           t,
           style: T.body.copyWith(
-            height: 1.55,
+            height: 1.5,
             color: textColor,
-            fontWeight: fontWeight,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ),
@@ -1188,28 +1272,50 @@ class StoryScreen extends StatefulWidget {
 }
 
 class _StoryScreenState extends State<StoryScreen> {
+  final _scrollCtrl = ScrollController();
+  late final ValueNotifier<PlayCursor> _cursor;
   late int _chap;
-  late int _paraIdx;
-  late int _sentIdx;
-  late int _wordIdx;
-  bool _playing = false;
   bool _hidePt = false;
+  bool _userDragging = false;
   double _rate = 0.45; // 0.30 = 0.75x, 0.45 = 1.0x, 0.58 = 1.25x
   int _runId = 0;
   Timer? _fallbackWordTimer;
+  bool _nativeProgressSeen = false;
   int _ttsWordOffset = 0;
+
+  int get _paraIdx => _cursor.value.para;
+  int get _sentIdx => _cursor.value.sent;
+  int get _wordIdx => _cursor.value.word;
+  bool get _playing => _cursor.value.playing;
+
+  void _updateCursor({int? para, int? sent, int? word, bool? playing}) {
+    _cursor.value = (
+      para: para ?? _cursor.value.para,
+      sent: sent ?? _cursor.value.sent,
+      word: word ?? _cursor.value.word,
+      playing: playing ?? _cursor.value.playing,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _chap = widget.b.chapterIdx.clamp(0, widget.b.chapters.length - 1);
-    final maxP = (widget.b.chapters[_chap].paragraphs.length - 1)
-        .clamp(0, 999999);
-    _paraIdx = widget.b.paraIdx.clamp(0, maxP);
-    final sents = splitSentences(widget.b.chapters[_chap].paragraphs[_paraIdx]);
-    _sentIdx = widget.b.sentIdx.clamp(0, (sents.length - 1).clamp(0, 9999));
-    final words = _sentIdx < sents.length ? sentenceWords(sents[_sentIdx]) : <String>[];
-    _wordIdx = widget.b.wordIdx.clamp(0, (words.length - 1).clamp(0, 9999));
+    final maxP =
+        (widget.b.chapters[_chap].paragraphs.length - 1).clamp(0, 999999);
+    final initP = widget.b.paraIdx.clamp(0, maxP);
+    final sents = splitSentences(widget.b.chapters[_chap].paragraphs[initP]);
+    final initS = widget.b.sentIdx.clamp(0, (sents.length - 1).clamp(0, 9999));
+    final words =
+        initS < sents.length ? sentenceWords(sents[initS]) : <String>[];
+    final initW = widget.b.wordIdx.clamp(0, (words.length - 1).clamp(0, 9999));
+
+    _cursor = ValueNotifier((
+      para: initP,
+      sent: initS,
+      word: initW,
+      playing: false,
+    ));
 
     _setupTtsProgress();
   }
@@ -1218,22 +1324,23 @@ class _StoryScreenState extends State<StoryScreen> {
     tts.setProgressHandler(
         (String text, int startOffset, int endOffset, String word) {
       if (!mounted || !_playing) return;
+      // Native Android TTS progress works: cancel simulated fallback immediately!
+      _nativeProgressSeen = true;
+      _fallbackWordTimer?.cancel();
+
       final paras = widget.b.chapters[_chap].paragraphs;
       if (_paraIdx >= paras.length) return;
       final sents = splitSentences(paras[_paraIdx]);
       if (_sentIdx >= sents.length) return;
-      final curSent = sents[_sentIdx];
-      final words = sentenceWords(curSent);
+      final words = sentenceWords(sents[_sentIdx]);
 
-      // Find token index in curSent matching startOffset + _ttsWordOffset
       var charAcc = 0;
       final effectiveStart = startOffset + _ttsWordOffset;
       for (var t = 0; t < words.length; t++) {
         final tokLen = words[t].length;
-        if (effectiveStart >= charAcc && effectiveStart < charAcc + tokLen + 2) {
-          if (t != _wordIdx) {
-            setState(() => _wordIdx = t);
-            _saveCursor();
+        if (effectiveStart >= charAcc && effectiveStart <= charAcc + tokLen) {
+          if (t > _wordIdx || (t == 0 && _wordIdx == 0)) {
+            _updateCursor(word: t);
           }
           break;
         }
@@ -1245,57 +1352,81 @@ class _StoryScreenState extends State<StoryScreen> {
   @override
   void dispose() {
     _runId++;
-    _playing = false;
     _fallbackWordTimer?.cancel();
+    tts.setProgressHandler((_, _, _, _) {});
     tts.stop();
+    if (widget.b.id > 0) {
+      store.updateEbookProgress(
+          widget.b.id, _chap, _paraIdx, _sentIdx, _wordIdx, true);
+    }
+    _scrollCtrl.dispose();
+    _cursor.dispose();
     super.dispose();
   }
 
-  Future<void> _saveCursor() async {
+  Future<void> _saveCursor({bool notify = false}) async {
     if (widget.b.id > 0) {
       await store.updateEbookProgress(
-          widget.b.id, _chap, _paraIdx, _sentIdx, _wordIdx);
+          widget.b.id, _chap, _paraIdx, _sentIdx, _wordIdx, notify);
     }
   }
 
-  void _scrollToCurrent() {
+  /// Calm auto-scroll: ONLY scrolls when the active sentence approaches the bottom/top
+  /// edge of the screen, never when it's already comfortably visible or while user drags.
+  void _scrollToCurrent({bool force = false}) {
+    if (_userDragging && !force) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final key = GlobalObjectKey('s_${_chap}_${_paraIdx}_$_sentIdx');
       final ctx = key.currentContext;
-      if (ctx != null) {
-        Scrollable.ensureVisible(
-          ctx,
-          alignment: 0.28,
-          duration: const Duration(milliseconds: 320),
-          curve: Curves.easeOutCubic,
-        );
+      if (ctx == null) {
+        if (_paraIdx == 0 && _sentIdx == 0 && _scrollCtrl.hasClients) {
+          _scrollCtrl.animateTo(0,
+              duration: T.fast, curve: T.curve);
+        }
+        return;
       }
+      final box = ctx.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) return;
+      final scrollable = Scrollable.maybeOf(ctx);
+      final vpBox = scrollable?.context.findRenderObject() as RenderBox?;
+      if (vpBox != null && vpBox.hasSize && !force) {
+        final topInVp = box.localToGlobal(Offset.zero, ancestor: vpBox).dy;
+        final botInVp = topInVp + box.size.height;
+        final vpH = vpBox.size.height;
+        // Already comfortably visible in viewport -> keep page completely still!
+        if (topInVp >= vpH * 0.08 && botInVp <= vpH * 0.80) return;
+      }
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.20,
+        duration: const Duration(milliseconds: 350),
+        curve: T.curve,
+      );
     });
   }
 
   Future<void> _pauseAudio() async {
     _runId++;
     _fallbackWordTimer?.cancel();
-    if (mounted) setState(() => _playing = false);
+    if (mounted) _updateCursor(playing: false);
     await tts.stop();
-    await _saveCursor();
+    await _saveCursor(notify: true);
   }
 
   Future<void> _setChapter(int idx) async {
     await _pauseAudio();
-    setState(() {
-      _chap = idx;
-      _paraIdx = 0;
-      _sentIdx = 0;
-      _wordIdx = 0;
-    });
-    await _saveCursor();
+    setState(() => _chap = idx);
+    _updateCursor(para: 0, sent: 0, word: 0, playing: false);
+    if (_scrollCtrl.hasClients) _scrollCtrl.jumpTo(0);
+    await _saveCursor(notify: true);
   }
 
   Future<void> _playFromCurrent() async {
     final myRun = ++_runId;
-    setState(() => _playing = true);
+    _updateCursor(playing: true);
     final paras = widget.b.chapters[_chap].paragraphs;
+    await tts.setLanguage('fr-FR');
     await tts.awaitSpeakCompletion(true);
 
     for (var p = _paraIdx; p < paras.length; p++) {
@@ -1304,45 +1435,51 @@ class _StoryScreenState extends State<StoryScreen> {
         continue;
       }
       final sents = splitSentences(paras[p]);
+      if (sents.isEmpty) continue;
       final startS = (p == _paraIdx) ? _sentIdx.clamp(0, sents.length - 1) : 0;
 
       for (var s = startS; s < sents.length; s++) {
         if (!mounted || _runId != myRun || !_playing) return;
         final words = sentenceWords(sents[s]);
-        final startW = (p == _paraIdx && s == _sentIdx)
-            ? _wordIdx.clamp(0, (words.length - 1).clamp(0, 9999))
+        if (words.isEmpty) continue;
+        var startW = (p == _paraIdx && s == _sentIdx)
+            ? _wordIdx.clamp(0, words.length - 1)
             : 0;
 
-        setState(() {
-          _paraIdx = p;
-          _sentIdx = s;
-          _wordIdx = startW;
-        });
-        await _saveCursor();
+        var speakText = words.skip(startW).join(' ');
+        // If paused at trailing punctuation, restart sentence cleanly or skip empty punctuation.
+        if (!wordRe.hasMatch(speakText)) {
+          if (startW > 0 && wordRe.hasMatch(sents[s])) {
+            startW = 0;
+            speakText = sents[s];
+          } else {
+            continue;
+          }
+        }
+
+        _updateCursor(para: p, sent: s, word: startW, playing: true);
+        await _saveCursor(notify: false);
         _scrollToCurrent();
 
-        // Calculate spoken text slice starting from _wordIdx
-        final speakText = words.skip(startW).join(' ');
         _ttsWordOffset = words.take(startW).join(' ').length;
         if (_ttsWordOffset > 0) _ttsWordOffset += 1;
 
-        // Fallback timer: advances _wordIdx smoothly if Android TTS engine doesn't emit onRangeStart
         _fallbackWordTimer?.cancel();
-        if (words.isNotEmpty && startW < words.length) {
-          final msPerWord = (_rate == 0.30 ? 550 : (_rate == 0.58 ? 280 : 380));
-          var simulatedWord = startW;
-          _fallbackWordTimer = Timer.periodic(Duration(milliseconds: msPerWord), (tm) {
-            if (!mounted || _runId != myRun || !_playing) {
-              tm.cancel();
-              return;
-            }
-            if (++simulatedWord < words.length) {
-              if (mounted) setState(() => _wordIdx = simulatedWord);
-            } else {
-              tm.cancel();
-            }
-          });
-        }
+        _nativeProgressSeen = false;
+        final msPerWord = (_rate == 0.30 ? 550 : (_rate == 0.58 ? 280 : 380));
+        var simulatedWord = startW;
+        _fallbackWordTimer =
+            Timer.periodic(Duration(milliseconds: msPerWord), (tm) {
+          if (!mounted || _runId != myRun || !_playing || _nativeProgressSeen) {
+            tm.cancel();
+            return;
+          }
+          if (++simulatedWord < words.length) {
+            _updateCursor(word: simulatedWord);
+          } else {
+            tm.cancel();
+          }
+        });
 
         final started = DateTime.now();
         await tts.setSpeechRate(_rate);
@@ -1353,16 +1490,13 @@ class _StoryScreenState extends State<StoryScreen> {
         final sec = DateTime.now().difference(started).inSeconds.clamp(1, 45);
         await store.addListen(sec);
 
-        // Finished sentence -> next sentence starts from word 0
-        _wordIdx = 0;
+        _updateCursor(word: 0);
       }
     }
 
     if (mounted && _runId == myRun) {
-      setState(() {
-        _playing = false;
-        _wordIdx = 0;
-      });
+      _updateCursor(playing: false, word: 0);
+      await _saveCursor(notify: true);
     }
   }
 
@@ -1374,18 +1508,14 @@ class _StoryScreenState extends State<StoryScreen> {
     }
   }
 
-  Future<void> _seekTo(int pIdx, int sIdx, {int wIdx = 0, bool autoPlay = true}) async {
+  Future<void> _seekTo(int pIdx, int sIdx,
+      {int wIdx = 0, bool autoPlay = true}) async {
     _runId++;
     _fallbackWordTimer?.cancel();
     await tts.stop();
-    setState(() {
-      _paraIdx = pIdx;
-      _sentIdx = sIdx;
-      _wordIdx = wIdx;
-      _playing = false;
-    });
-    await _saveCursor();
-    _scrollToCurrent();
+    _updateCursor(para: pIdx, sent: sIdx, word: wIdx, playing: false);
+    await _saveCursor(notify: !autoPlay);
+    _scrollToCurrent(force: !autoPlay);
     if (autoPlay) {
       await _playFromCurrent();
     }
@@ -1427,22 +1557,17 @@ class _StoryScreenState extends State<StoryScreen> {
       }
     }
 
-    setState(() {
-      _paraIdx = p;
-      _sentIdx = s;
-      _wordIdx = 0;
-      _playing = false;
-    });
-    await _saveCursor();
-    _scrollToCurrent();
+    _updateCursor(para: p, sent: s, word: 0, playing: false);
+    await _saveCursor(notify: !wasPlaying);
+    _scrollToCurrent(force: true);
     if (wasPlaying) {
       await _playFromCurrent();
     } else {
-      // Speak stepped-to sentence so user gets immediate audio feedback
-      final sents = splitSentences(paras[_paraIdx]);
-      if (_sentIdx < sents.length && !sents[_sentIdx].startsWith('[[IMG:')) {
+      final sents = splitSentences(paras[p]);
+      if (s < sents.length && !sents[s].startsWith('[[IMG:')) {
+        await tts.setLanguage('fr-FR');
         await tts.setSpeechRate(_rate);
-        await tts.speak(sents[_sentIdx]);
+        await tts.speak(sents[s]);
       }
     }
   }
@@ -1516,8 +1641,8 @@ class _StoryScreenState extends State<StoryScreen> {
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
                           title: Text(w.lemma,
-                              style: T.body
-                                  .copyWith(fontWeight: FontWeight.w600)),
+                              style:
+                                  T.body.copyWith(fontWeight: FontWeight.w600)),
                           subtitle: Text(w.gloss,
                               style: T.secondary,
                               maxLines: 1,
@@ -1540,7 +1665,8 @@ class _StoryScreenState extends State<StoryScreen> {
                               ),
                             ],
                           ),
-                          onTap: () => showWordSheet(context, w, source: 'ebook'),
+                          onTap: () =>
+                              showWordSheet(context, w, source: 'ebook'),
                         );
                       },
                     ),
@@ -1558,7 +1684,6 @@ class _StoryScreenState extends State<StoryScreen> {
   Widget build(BuildContext context) {
     final chapter = widget.b.chapters[_chap];
     final multi = widget.b.chapters.length > 1;
-    final (curPage, totalPages) = bookPageInfo(widget.b, _chap, _paraIdx);
 
     return Scaffold(
       appBar: AppBar(
@@ -1592,69 +1717,93 @@ class _StoryScreenState extends State<StoryScreen> {
       body: Column(
         children: [
           Expanded(
-            child: ListenableBuilder(
-              listenable: store,
-              builder: (context, _) => ListView(
+            child: NotificationListener<UserScrollNotification>(
+              onNotification: (n) {
+                _userDragging = n.direction != ScrollDirection.idle;
+                return false;
+              },
+              child: ListView.builder(
+                controller: _scrollCtrl,
+                scrollCacheExtent: const ScrollCacheExtent.pixels(700),
                 padding: const EdgeInsets.all(T.s4),
-                children: [
-                  Text(widget.b.title, style: T.title),
-                  if (multi) ...[
-                    const SizedBox(height: T.s3),
-                    GlassCard(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: T.s3, vertical: T.s2),
-                      child: Row(children: [
-                        IconButton(
-                          icon: const Icon(CupertinoIcons.chevron_left,
-                              size: 18),
-                          onPressed:
-                              _chap > 0 ? () => _setChapter(_chap - 1) : null,
-                        ),
-                        Expanded(
-                          child: Text(
-                            'Cap. ${_chap + 1}/${widget.b.chapters.length} · ${chapter.title}',
-                            style: T.body.copyWith(
-                                fontSize: 15, fontWeight: FontWeight.w600),
-                            textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                itemCount: chapter.paragraphs.length + 1,
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(widget.b.title, style: T.title),
+                        if (multi) ...[
+                          const SizedBox(height: T.s3),
+                          GlassCard(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: T.s3, vertical: T.s2),
+                            child: Row(children: [
+                              IconButton(
+                                icon: const Icon(CupertinoIcons.chevron_left,
+                                    size: 18),
+                                onPressed: _chap > 0
+                                    ? () => _setChapter(_chap - 1)
+                                    : null,
+                              ),
+                              Expanded(
+                                child: Text(
+                                  'Cap. ${_chap + 1}/${widget.b.chapters.length} · ${chapter.title}',
+                                  style: T.body.copyWith(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600),
+                                  textAlign: TextAlign.center,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(CupertinoIcons.chevron_right,
+                                    size: 18),
+                                onPressed: _chap < widget.b.chapters.length - 1
+                                    ? () => _setChapter(_chap + 1)
+                                    : null,
+                              ),
+                            ]),
                           ),
+                        ],
+                        const SizedBox(height: T.s2),
+                        Text(
+                          'Tradução PT-BR abaixo de cada frase · Segure numa palavra para tocar a partir dela.',
+                          style: T.caption,
                         ),
-                        IconButton(
-                          icon: const Icon(CupertinoIcons.chevron_right,
-                              size: 18),
-                          onPressed: _chap < widget.b.chapters.length - 1
-                              ? () => _setChapter(_chap + 1)
-                              : null,
-                        ),
-                      ]),
-                    ),
-                  ],
-                  const SizedBox(height: T.s2),
-                  Text(
-                    'Tradução PT-BR abaixo de cada frase · Acompanhe palavra por palavra estilo letra de música.',
-                    style: T.caption,
-                  ),
-                  const SizedBox(height: T.s4),
-                  for (final (i, para) in chapter.paragraphs.indexed)
-                    BilingualParagraph(
-                      para,
-                      showAudio: true,
-                      keyPrefix: 's_${_chap}_$i',
-                      activeSentIdx: _paraIdx == i ? _sentIdx : null,
-                      activeWordIdx: _paraIdx == i ? _wordIdx : null,
-                      isPlaying: _paraIdx == i && _playing,
-                      hidePt: _hidePt,
-                      onTapSentenceAudio: (sIdx) =>
-                          _seekTo(i, sIdx, autoPlay: true),
-                      onTapWord: (t) async {
-                        if (_playing) await _pauseAudio();
-                        if (context.mounted) {
-                          tapWordInContext(context, t, 'story');
-                        }
-                      },
-                    ),
-                ],
+                        const SizedBox(height: T.s4),
+                      ],
+                    );
+                  }
+                  final i = index - 1;
+                  final para = chapter.paragraphs[i];
+                  return ValueListenableBuilder<PlayCursor>(
+                    valueListenable: _cursor,
+                    builder: (context, cur, _) {
+                      final active = cur.para == i;
+                      return BilingualParagraph(
+                        para,
+                        showAudio: true,
+                        keyPrefix: 's_${_chap}_$i',
+                        activeSentIdx: active ? cur.sent : null,
+                        activeWordIdx: active ? cur.word : null,
+                        isPlaying: active && cur.playing,
+                        hidePt: _hidePt,
+                        onTapSentenceAudio: (sIdx) =>
+                            _seekTo(i, sIdx, autoPlay: true),
+                        onLongPressWord: (sIdx, wIdx) =>
+                            _seekTo(i, sIdx, wIdx: wIdx, autoPlay: true),
+                        onTapWord: (t) async {
+                          if (_playing) await _pauseAudio();
+                          if (context.mounted) {
+                            tapWordInContext(context, t, 'story');
+                          }
+                        },
+                      );
+                    },
+                  );
+                },
               ),
             ),
           ),
@@ -1663,71 +1812,78 @@ class _StoryScreenState extends State<StoryScreen> {
             child: GlassCard(
               padding: const EdgeInsets.symmetric(
                   horizontal: T.s3, vertical: T.s2),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(children: [
-                    Expanded(
-                      child: Text(
-                        'Página $curPage de $totalPages',
-                        style: T.body.copyWith(
-                            fontSize: 14, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: () => _seekTo(0, 0, autoPlay: false),
-                      child: Text('Início ↺', style: T.caption),
-                    ),
-                  ]),
-                  const SizedBox(height: T.s1),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              child: ValueListenableBuilder<PlayCursor>(
+                valueListenable: _cursor,
+                builder: (_, cur, _) {
+                  final (curPage, totalPages) =
+                      bookPageInfo(widget.b, _chap, cur.para);
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        tooltip: 'Voltar frase anterior',
-                        icon: const Icon(CupertinoIcons.backward_end_fill,
-                            color: T.text),
-                        onPressed: () => _stepSentence(-1),
-                      ),
-                      IconButton.filled(
-                        tooltip: _playing
-                            ? 'Pausar nesta palavra'
-                            : 'Continuar de onde parou',
-                        style: IconButton.styleFrom(
-                            backgroundColor:
-                                _playing ? T.rose : T.lavender),
-                        iconSize: 28,
-                        icon: Icon(
-                          _playing
-                              ? CupertinoIcons.pause_fill
-                              : CupertinoIcons.play_fill,
-                          color: T.text,
+                      Row(children: [
+                        Expanded(
+                          child: Text(
+                            'Página $curPage de $totalPages',
+                            style: T.body.copyWith(
+                                fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
                         ),
-                        onPressed: _togglePlayPause,
-                      ),
-                      IconButton(
-                        tooltip: 'Avançar próxima frase',
-                        icon: const Icon(CupertinoIcons.forward_end_fill,
-                            color: T.text),
-                        onPressed: () => _stepSentence(1),
-                      ),
-                      TextButton(
-                        onPressed: () => setState(() {
-                          _rate = _rate == 0.45
-                              ? 0.58
-                              : (_rate == 0.58 ? 0.30 : 0.45);
-                        }),
-                        child: Text(
-                          _rate == 0.30
-                              ? '0.75x 🐢'
-                              : (_rate == 0.58 ? '1.25x' : '1.0x'),
-                          style: T.body.copyWith(
-                              fontSize: 14, fontWeight: FontWeight.w600),
+                        GestureDetector(
+                          onTap: () => _seekTo(0, 0, autoPlay: false),
+                          child: Text('Início ↺', style: T.caption),
                         ),
+                      ]),
+                      const SizedBox(height: T.s1),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          IconButton(
+                            tooltip: 'Voltar frase anterior',
+                            icon: const Icon(CupertinoIcons.backward_end_fill,
+                                color: T.text),
+                            onPressed: () => _stepSentence(-1),
+                          ),
+                          IconButton.filled(
+                            tooltip: cur.playing
+                                ? 'Pausar nesta palavra'
+                                : 'Continuar de onde parou',
+                            style: IconButton.styleFrom(
+                                backgroundColor:
+                                    cur.playing ? T.rose : T.lavender),
+                            iconSize: 28,
+                            icon: Icon(
+                              cur.playing
+                                  ? CupertinoIcons.pause_fill
+                                  : CupertinoIcons.play_fill,
+                              color: T.text,
+                            ),
+                            onPressed: _togglePlayPause,
+                          ),
+                          IconButton(
+                            tooltip: 'Avançar próxima frase',
+                            icon: const Icon(CupertinoIcons.forward_end_fill,
+                                color: T.text),
+                            onPressed: () => _stepSentence(1),
+                          ),
+                          TextButton(
+                            onPressed: () => setState(() {
+                              _rate = _rate == 0.45
+                                  ? 0.58
+                                  : (_rate == 0.58 ? 0.30 : 0.45);
+                            }),
+                            child: Text(
+                              _rate == 0.30
+                                  ? '0.75x 🐢'
+                                  : (_rate == 0.58 ? '1.25x' : '1.0x'),
+                              style: T.body.copyWith(
+                                  fontSize: 14, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
-                  ),
-                ],
+                  );
+                },
               ),
             ),
           ),

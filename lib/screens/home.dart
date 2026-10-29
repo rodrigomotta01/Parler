@@ -81,9 +81,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ]),
               const SizedBox(height: T.s5),
               Row(children: [
-                Expanded(child: Text('Atividade diária', style: T.title)),
+                Expanded(child: Text('Últimas semanas', style: T.title)),
                 Text(
-                  '${store.days.values.where((d) => metGoal(d, goalRev: gRev, goalSec: store.goalSec)).length} metas batidas',
+                  '${store.days.values.where((d) => d.reviews > 0 || d.listenSec > 0).length} dias ativos',
                   style: T.caption,
                 ),
               ]),
@@ -108,219 +108,193 @@ class _HomeScreenState extends State<HomeScreen> {
         Text(label, style: T.secondary),
       ]);
 
-  /// GitHub-style daily contributions heatmap (12 weeks, weekdays label on left, months on top).
+  /// Compact 5-week daily contributions chart (blue scale, includes Today live).
   Widget _githubContributionsHeatmap(Map<String, Day> days) {
     final now = DateTime.now();
-    final todayKey = dayKey(now);
-    // 12 weeks = 84 days. Start on Monday.
-    final start =
-        DateTime(now.year, now.month, now.day - 83 - (now.weekday - 1));
+    final todayUtc = DateTime.utc(now.year, now.month, now.day);
+    final todayKey = dayKey(todayUtc);
 
-    String monthLabel(int m) => switch (m) {
-          1 => 'Jan',
-          2 => 'Fev',
-          3 => 'Mar',
-          4 => 'Abr',
-          5 => 'Mai',
-          6 => 'Jun',
-          7 => 'Jul',
-          8 => 'Ago',
-          9 => 'Set',
-          10 => 'Out',
-          11 => 'Nov',
-          _ => 'Dez',
+    // Current week's Monday in UTC so DST never shifts calendar dates:
+    final thisMonday =
+        todayUtc.subtract(Duration(days: todayUtc.weekday - 1));
+    const numWeeks = 5;
+    final start =
+        thisMonday.subtract(const Duration(days: (numWeeks - 1) * 7));
+
+    final inspected = _selectedDay ?? todayUtc;
+    final inspectedKey = dayKey(inspected);
+    final inspectedData = days[inspectedKey];
+    final inRevs = inspectedData?.reviews ?? 0;
+    final inSecs = inspectedData?.listenSec ?? 0;
+    final inActive = inRevs > 0 || inSecs > 0;
+    final inMet =
+        metGoal(inspectedData, goalRev: store.goalRev, goalSec: store.goalSec);
+    final isInspectingToday = inspectedKey == todayKey;
+
+    String fmtListen(int s) =>
+        s == 0 ? '0 min' : (s < 60 ? '${s}s' : '${s ~/ 60} min');
+
+    String wdShort(int wd) => switch (wd) {
+          1 => 'Seg',
+          2 => 'Ter',
+          3 => 'Qua',
+          4 => 'Qui',
+          5 => 'Sex',
+          6 => 'Sáb',
+          _ => 'Dom',
         };
 
-    final selected = _selectedDay;
-    final selectedDayData = selected != null ? days[dayKey(selected)] : null;
-    final selectedMet = selected != null &&
-        metGoal(selectedDayData,
-            goalRev: store.goalRev, goalSec: store.goalSec);
+    const cell = 15.0;
+    const gap = 3.5;
 
-    return LayoutBuilder(builder: (_, c) {
-      const leftPad = 26.0;
-      final availableWidth = c.maxWidth - leftPad;
-      final size = (availableWidth - 11 * 3.5) / 12;
-
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Month labels row
-          Row(children: [
-            const SizedBox(width: leftPad),
-            for (var w = 0; w < 12; w++)
-              SizedBox(
-                width: size + (w < 11 ? 3.5 : 0),
-                child: Builder(builder: (_) {
-                  final colDate =
-                      DateTime(start.year, start.month, start.day + w * 7);
-                  // Show month label on first week or when month changes
-                  final show = w == 0 ||
-                      colDate.month !=
-                          DateTime(start.year, start.month,
-                                  start.day + (w - 1) * 7)
-                              .month;
-                  return show
-                      ? Text(monthLabel(colDate.month),
-                          style: const TextStyle(
-                              fontSize: 10,
-                              color: T.textMuted,
-                              fontWeight: FontWeight.w600))
-                      : const SizedBox.shrink();
-                }),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // Left: compact 5-week x 7-day matrix
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 22,
+              height: 7 * cell + 6 * gap,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Seg', style: T.caption.copyWith(fontSize: 9)),
+                  Text('Qua', style: T.caption.copyWith(fontSize: 9)),
+                  Text('Sex', style: T.caption.copyWith(fontSize: 9)),
+                  Text('Dom', style: T.caption.copyWith(fontSize: 9)),
+                ],
               ),
-          ]),
-          const SizedBox(height: 4),
-
-          // Main matrix: Weekdays on left + 12 week columns
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Weekday labels
-              SizedBox(
-                width: leftPad,
-                height: 7 * (size + 3.5),
+            ),
+            for (var w = 0; w < numWeeks; w++)
+              Padding(
+                padding: EdgeInsets.only(right: w < numWeeks - 1 ? gap : 0),
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: const [
-                    Text('Seg',
-                        style: TextStyle(fontSize: 9, color: T.textMuted)),
-                    Text('Qua',
-                        style: TextStyle(fontSize: 9, color: T.textMuted)),
-                    Text('Sex',
-                        style: TextStyle(fontSize: 9, color: T.textMuted)),
-                    Text('Dom',
-                        style: TextStyle(fontSize: 9, color: T.textMuted)),
-                  ],
-                ),
-              ),
-
-              // 12 columns
-              Expanded(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    for (var w = 0; w < 12; w++)
-                      Column(children: [
-                        for (var d = 0; d < 7; d++)
-                          Builder(builder: (_) {
-                            final day = DateTime(start.year, start.month,
-                                start.day + w * 7 + d);
-                            final k = dayKey(day);
-                            final a = days[k];
-                            final isFuture = day.isAfter(now);
-                            final isToday = k == todayKey;
-                            final isSel = selected != null && dayKey(selected) == k;
-                            final isMet = metGoal(a,
-                                goalRev: store.goalRev,
-                                goalSec: store.goalSec);
-                            final revs = a?.reviews ?? 0;
-                            final mins = (a?.listenSec ?? 0) ~/ 60;
-                            final isDouble = revs >= store.goalRev * 2 ||
-                                (a?.listenSec ?? 0) >= store.goalSec * 2;
+                    for (var d = 0; d < 7; d++)
+                      Builder(builder: (_) {
+                        final day = start.add(Duration(days: w * 7 + d));
+                        final k = dayKey(day);
+                        final a = days[k];
+                        final isFuture = day.isAfter(todayUtc);
+                        final isToday = k == todayKey;
+                        final isSel = k == inspectedKey;
+                        final revs = a?.reviews ?? 0;
+                        final secs = a?.listenSec ?? 0;
+                        final hasActivity = revs > 0 || secs > 0;
+                        final isMet = metGoal(a,
+                            goalRev: store.goalRev, goalSec: store.goalSec);
+                        final isDouble = revs >= store.goalRev * 2 ||
+                            secs >= store.goalSec * 2;
 
-                            // GitHub contribution color scale
-                            final color = isFuture
-                                ? Colors.transparent
-                                : isDouble
-                                    ? const Color(0xFF216E39) // Deep green (2x goal)
-                                    : isMet
-                                        ? const Color(0xFF2DA44E) // Bright GitHub green (Met goal)
-                                        : (revs > 0 || mins > 0)
-                                            ? const Color(0xFF9BE9A8) // Light green (some study)
-                                            : const Color(0xFFEBEDF0); // Light neutral gray
+                        final color = isFuture
+                            ? T.hairline
+                            : isDouble
+                                ? T.actHigh
+                                : isMet
+                                    ? T.actGoal
+                                    : hasActivity
+                                        ? T.actSome
+                                        : T.actNone;
 
-                            return GestureDetector(
-                              onTap: isFuture
-                                  ? null
-                                  : () => setState(() => _selectedDay = day),
-                              child: Container(
-                                width: size,
-                                height: size,
-                                margin: const EdgeInsets.only(bottom: 3.5),
-                                decoration: BoxDecoration(
-                                  color: color,
-                                  borderRadius: BorderRadius.circular(3),
-                                  border: isToday
+                        return GestureDetector(
+                          onTap: isFuture
+                              ? null
+                              : () => setState(() => _selectedDay = day),
+                          child: Container(
+                            width: cell,
+                            height: cell,
+                            margin: EdgeInsets.only(bottom: d < 6 ? gap : 0),
+                            decoration: BoxDecoration(
+                              color: color,
+                              borderRadius: BorderRadius.circular(3.5),
+                              border: isToday
+                                  ? Border.all(color: T.text, width: 1.5)
+                                  : (isSel
                                       ? Border.all(
-                                          color: const Color(0xFF1C1C1E),
-                                          width: 1.5)
-                                      : (isSel
-                                          ? Border.all(
-                                              color: T.lavender, width: 1.5)
-                                          : null),
-                                ),
-                              ),
-                            );
-                          }),
-                      ]),
+                                          color: T.actGoal, width: 1.5)
+                                      : null),
+                            ),
+                          ),
+                        );
+                      }),
                   ],
                 ),
               ),
+          ],
+        ),
+        const SizedBox(width: T.s4),
+
+        // Right: Live summary for Today (or tapped day) + compact legend
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(children: [
+                Icon(
+                  inMet
+                      ? CupertinoIcons.checkmark_seal_fill
+                      : (inActive
+                          ? CupertinoIcons.flame_fill
+                          : CupertinoIcons.circle),
+                  size: 16,
+                  color: inMet
+                      ? T.actGoal
+                      : (inActive ? T.actSome : T.textMuted),
+                ),
+                const SizedBox(width: T.s1),
+                Expanded(
+                  child: Text(
+                    isInspectingToday
+                        ? 'Hoje (${inspected.day.toString().padLeft(2, '0')}/${inspected.month.toString().padLeft(2, '0')})'
+                        : '${wdShort(inspected.weekday)}, ${inspected.day.toString().padLeft(2, '0')}/${inspected.month.toString().padLeft(2, '0')}',
+                    style: T.body
+                        .copyWith(fontSize: 15, fontWeight: FontWeight.w600),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ]),
+              const SizedBox(height: T.s1),
+              Text(
+                '$inRevs revisões · ${fmtListen(inSecs)}',
+                style: T.secondary.copyWith(color: T.text, fontSize: 14),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                inMet
+                    ? 'Meta diária concluída!'
+                    : (inActive
+                        ? 'Progresso registrado hoje'
+                        : 'Sem atividade neste dia'),
+                style: T.caption,
+              ),
+              const SizedBox(height: T.s3),
+              Row(children: [
+                Text('Menos', style: T.caption.copyWith(fontSize: 10)),
+                const SizedBox(width: 4),
+                _legendSquare(T.actNone),
+                _legendSquare(T.actSome),
+                _legendSquare(T.actGoal),
+                _legendSquare(T.actHigh),
+                const SizedBox(width: 4),
+                Text('Mais', style: T.caption.copyWith(fontSize: 10)),
+              ]),
             ],
           ),
-          const SizedBox(height: T.s3),
-
-          // Selected day details or prompt
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: T.s3, vertical: T.s2),
-            decoration: BoxDecoration(
-              color: T.bg,
-              borderRadius: BorderRadius.circular(T.rSm),
-              border: Border.all(color: T.hairline, width: 0.5),
-            ),
-            child: Row(children: [
-              if (selected != null) ...[
-                Icon(
-                  selectedMet
-                      ? CupertinoIcons.checkmark_seal_fill
-                      : CupertinoIcons.circle,
-                  size: 16,
-                  color: selectedMet
-                      ? const Color(0xFF2DA44E)
-                      : T.textMuted,
-                ),
-                const SizedBox(width: T.s2),
-                Expanded(
-                  child: Text(
-                    '${selected.day.toString().padLeft(2, '0')}/${selected.month.toString().padLeft(2, '0')}: '
-                    '${selectedDayData?.reviews ?? 0} revisões, '
-                    '${(selectedDayData?.listenSec ?? 0) ~/ 60} min — '
-                    '${selectedMet ? 'Meta concluída 🎉' : 'Meta não atingida'}',
-                    style: T.caption.copyWith(color: T.text),
-                  ),
-                ),
-              ] else
-                Expanded(
-                  child: Text(
-                    'Toque num quadrado para ver o histórico do dia.',
-                    style: T.caption,
-                  ),
-                ),
-              // Legend
-              Row(children: [
-                Text('Menos', style: TextStyle(fontSize: 9, color: T.textMuted)),
-                const SizedBox(width: 3),
-                _legendSquare(const Color(0xFFEBEDF0)),
-                _legendSquare(const Color(0xFF9BE9A8)),
-                _legendSquare(const Color(0xFF2DA44E)),
-                _legendSquare(const Color(0xFF216E39)),
-                const SizedBox(width: 3),
-                Text('Mais', style: TextStyle(fontSize: 9, color: T.textMuted)),
-              ]),
-            ]),
-          ),
-        ],
-      );
-    });
+        ),
+      ],
+    );
   }
 
   Widget _legendSquare(Color c) => Container(
-        width: 8,
-        height: 8,
+        width: 9,
+        height: 9,
         margin: const EdgeInsets.symmetric(horizontal: 1.5),
         decoration:
-            BoxDecoration(color: c, borderRadius: BorderRadius.circular(1.5)),
+            BoxDecoration(color: c, borderRadius: BorderRadius.circular(2)),
       );
 
   void _settings(BuildContext context) => showModalBottomSheet(

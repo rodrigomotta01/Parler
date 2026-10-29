@@ -62,6 +62,16 @@ void main() {
       'Le soleil brille doucement !',
       'M. Hamel nous regarde.',
     ]);
+
+    // Handles PDF missing spaces, semicolons, quotes, and dialogue attribution.
+    final complex = splitSentences(
+      '« Bonjour ! » dit-il.Il partit aussitôt ; la nuit tombait déjà.',
+    );
+    expect(complex, [
+      '« Bonjour ! » dit-il.',
+      'Il partit aussitôt ;',
+      'la nuit tombait déjà.',
+    ]);
   });
 
   test('parseEbookBytes: parses .epub with embedded image and .pdf document', () {

@@ -21,6 +21,12 @@ abstract final class T {
   static const rose = Color(0xFFF7C6CF);
   static const butter = Color(0xFFFBEDB5);
 
+  // Activity heatmap blue scale (none -> active -> goal met -> 2x goal).
+  static const actNone = Color(0xFFEBEDF0);
+  static const actSome = Color(0xFF60A5FA);
+  static const actGoal = Color(0xFF2563EB);
+  static const actHigh = Color(0xFF1D4ED8);
+
   static Color level(String l) => switch (l) {
         'A1' => mint,
         'A2' => sky,
