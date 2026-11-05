@@ -20,7 +20,7 @@ All tokens and components live in **one file: `lib/ui.dart`**. Read it before to
 6. **Spacing:** 4-pt grid → `T.s1..T.s6` = 4, 8, 12, 16, 24, 32.
 7. **Type:** Inter (bundled). Sizes: 34 large title (w700, tight -0.5), 22 title, 17 body, 15 secondary, 13 caption. Muted text = `T.textMuted`.
 8. **Motion:** `T.fast` 200 ms + `Curves.easeOutCubic`. No bouncy springs.
-9. **Light mode only** (by product decision).
+9. **Light mode only** (by product decision; exception: reader screen supports Claro/Sépia/Noite via `ReaderTheme`).
 10. **Accessibility:** tap targets ≥ 44 px; text on pastel always `T.text` (pastels are backgrounds, never text colors).
 
 ## Palette

@@ -19,13 +19,20 @@ final _notifs = FlutterLocalNotificationsPlugin();
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   store = await Store.open();
+  applyTtsVoice(store.settings['ttsVoice']);
   runApp(const ParlerApp());
   scheduleReminder(); // after first frame; failures must not block the app
+  var wasMet = store.todayMet;
+  store.addListener(() {
+    if (store.todayMet != wasMet) {
+      wasMet = store.todayMet;
+      scheduleReminder();
+    }
+  });
 }
 
-/// Daily local reminder at [Store.reminderHour].
-// ponytail: fires even if today's goal is already met; skip-when-met needs a
-// one-shot schedule re-armed on each app open.
+/// Local reminders for morning (9h) and evening ([Store.reminderHour]), next 7 days.
+// ponytail: window of 7 days re-armed on app launch and goal changes; skipping today if met.
 Future<void> scheduleReminder() async {
   try {
     tzdata.initializeTimeZones();
@@ -38,21 +45,49 @@ Future<void> scheduleReminder() async {
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
-    final now = tz.TZDateTime.now(tz.local);
-    var at = tz.TZDateTime(
-        tz.local, now.year, now.month, now.day, store.reminderHour);
-    if (at.isBefore(now)) at = at.add(const Duration(days: 1));
     await _notifs.cancelAll();
-    await _notifs.zonedSchedule(
-      id: 0,
-      title: 'Hora do francês 🇫🇷',
-      body: 'Mantenha sua ofensiva: algumas revisões ou um episódio.',
-      scheduledDate: at,
-      notificationDetails: const NotificationDetails(
-          android: AndroidNotificationDetails('daily', 'Lembrete diário')),
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time,
-    );
+
+    final now = tz.TZDateTime.now(tz.local);
+    var notifId = 1;
+
+    for (var dayOffset = 0; dayOffset < 7; dayOffset++) {
+      final date = now.add(Duration(days: dayOffset));
+      final isToday = dayOffset == 0;
+      if (isToday && store.todayMet) continue;
+
+      final morning =
+          tz.TZDateTime(tz.local, date.year, date.month, date.day, 9, 0);
+      if (morning.isAfter(now)) {
+        await _notifs.zonedSchedule(
+          id: notifId++,
+          title: 'Bonjour ! 🇫🇷',
+          body: 'Comece o dia com um pouco de leitura ou algumas cartas.',
+          scheduledDate: morning,
+          notificationDetails: const NotificationDetails(
+              android: AndroidNotificationDetails('daily', 'Lembrete diário',
+                  importance: Importance.defaultImportance,
+                  priority: Priority.defaultPriority)),
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        );
+      }
+
+      final eveHour = store.reminderHour == 9 ? 20 : store.reminderHour;
+      final evening =
+          tz.TZDateTime(tz.local, date.year, date.month, date.day, eveHour, 0);
+      if (evening.isAfter(now)) {
+        await _notifs.zonedSchedule(
+          id: notifId++,
+          title: 'Hora do francês 🇫🇷',
+          body: 'Mantenha sua ofensiva: finalize a leitura e a revisão de hoje.',
+          scheduledDate: evening,
+          notificationDetails: const NotificationDetails(
+              android: AndroidNotificationDetails('daily', 'Lembrete diário',
+                  importance: Importance.defaultImportance,
+                  priority: Priority.defaultPriority)),
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        );
+      }
+    }
   } catch (e) {
     debugPrint('reminder: $e');
   }

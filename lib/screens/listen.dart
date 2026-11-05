@@ -111,25 +111,101 @@ final builtInBooks = <UserBook>[
   ),
 ];
 
-/// Computes (currentPage, totalPages) based on cumulative words (~160 words per book page).
-(int, int) bookPageInfo(UserBook b, int chapIdx, int paraIdx) {
-  var totalWords = 0;
-  var curWords = 0;
+const wordsPerPage = 160;
+
+/// Returns the (chapterIndex, paragraphIndex) for the start of each page (1-based index in the returned list).
+/// If the book originated from a PDF with `[[PDFPAGE:i]]` markers, pages correspond 1:1 to the real PDF pages.
+List<(int chap, int para)> pageStarts(UserBook b) {
+  // 1. PDF books: check for explicit PDF page markers
+  final pdfPages = <int, (int chap, int para)>{};
   for (var c = 0; c < b.chapters.length; c++) {
     final paras = b.chapters[c].paragraphs;
     for (var p = 0; p < paras.length; p++) {
-      if (paras[p].startsWith('[[')) continue;
-      final wordsInPara = paras[p].split(RegExp(r'\s+')).length;
-      if (c < chapIdx || (c == chapIdx && p < paraIdx)) {
-        curWords += wordsInPara;
+      final m = RegExp(r'^\[\[PDFPAGE:(\d+)\]\]$').firstMatch(paras[p]);
+      if (m != null) {
+        final pageNum = int.tryParse(m.group(1)!);
+        if (pageNum != null) {
+          pdfPages[pageNum] = (c, p);
+        }
       }
-      totalWords += wordsInPara;
     }
   }
-  const wordsPerPage = 160;
-  final totalPages = max(1, (totalWords / wordsPerPage).ceil());
-  final curPage = ((curWords / wordsPerPage).floor() + 1).clamp(1, totalPages);
-  return (curPage, totalPages);
+
+  if (pdfPages.isNotEmpty) {
+    final maxPage = pdfPages.keys.reduce(max);
+    final sorted = <(int, int)>[];
+    (int, int) last = (0, 0);
+    for (var i = 0; i <= maxPage; i++) {
+      if (pdfPages.containsKey(i)) {
+        last = pdfPages[i]!;
+      }
+      sorted.add(last);
+    }
+    return sorted.isEmpty ? [(0, 0)] : sorted;
+  }
+
+  // 2. Non-PDF books (EPUB, short stories, pasted text): virtual pages of ~160 words
+  final starts = <(int, int)>[];
+  var wordsInCurrentPage = 0;
+  var hasStarted = false;
+
+  for (var c = 0; c < b.chapters.length; c++) {
+    final paras = b.chapters[c].paragraphs;
+    for (var p = 0; p < paras.length; p++) {
+      if (!hasStarted) {
+        starts.add((c, p));
+        hasStarted = true;
+      }
+      if (paras[p].startsWith('[[')) continue;
+      final count = paras[p]
+          .split(RegExp(r'\s+'))
+          .where((s) => s.isNotEmpty)
+          .length;
+      wordsInCurrentPage += count;
+      if (wordsInCurrentPage >= wordsPerPage) {
+        hasStarted = false;
+        wordsInCurrentPage = 0;
+      }
+    }
+  }
+  if (starts.isEmpty) starts.add((0, 0));
+  return starts;
+}
+
+/// Computes (currentPage, totalPages) based on [pageStarts].
+(int, int) bookPageInfo(UserBook b, int chapIdx, int paraIdx) {
+  final starts = pageStarts(b);
+  final totalPages = starts.length;
+  var curPage = 1;
+  for (var i = 0; i < starts.length; i++) {
+    final (c, p) = starts[i];
+    if (c < chapIdx || (c == chapIdx && p <= paraIdx)) {
+      curPage = i + 1;
+    } else {
+      break;
+    }
+  }
+  return (curPage.clamp(1, totalPages), totalPages);
+}
+
+final _noSpaceBefore = RegExp(r'^[!?;:»…,\.]');
+
+/// Assembles spoken text and character token ranges without awkward spaces before punctuation.
+(String text, List<(int charStart, int charEnd)> ranges) ttsJoin(
+    List<String> words) {
+  final buf = StringBuffer();
+  final ranges = <(int, int)>[];
+  for (var i = 0; i < words.length; i++) {
+    final w = words[i];
+    if (i > 0 && !_noSpaceBefore.hasMatch(w)) {
+      buf.write(' ');
+    }
+    final start = buf.length;
+    buf.write(w);
+    final end = buf.length;
+    ranges.add((start, end));
+  }
+  return (buf.toString(), ranges);
 }
 
 final _abbrevEndRe =
@@ -532,6 +608,7 @@ Future<List<Chapter>> hydratePdfImages(
       for (final para in c.paragraphs) {
         final m = RegExp(r'^\[\[PDFPAGE:(\d+)\]\]$').firstMatch(para);
         if (m != null) {
+          newParas.add(para);
           final pageZero = int.parse(m.group(1)!);
           // Render up to first 30 pages automatically to keep import snappy.
           if (pageZero < 30 && pageZero < doc.pagesCount) {
@@ -560,17 +637,8 @@ Future<List<Chapter>> hydratePdfImages(
     await doc.close();
     return out;
   } catch (_) {
-    // Strip unrendered [[PDFPAGE:i]] tokens if native renderer is unavailable.
-    return [
-      for (final c in chapters)
-        (
-          title: c.title,
-          paragraphs: [
-            for (final p in c.paragraphs)
-              if (!p.startsWith('[[PDFPAGE:')) p
-          ],
-        )
-    ];
+    // Keep chapters with [[PDFPAGE:i]] tokens preserved
+    return chapters;
   }
 }
 
@@ -1018,8 +1086,11 @@ typedef PlayCursor = ({int para, int sent, int word, bool playing});
 /// Stable per-sentence translation widget: reads synchronous cache first so
 /// rebuilds never collapse/expand layout height.
 class _SentenceTranslation extends StatefulWidget {
-  const _SentenceTranslation(this.sent);
+  const _SentenceTranslation(this.sent,
+      {this.pal = ReaderTheme.light, this.fontSize = 17});
   final String sent;
+  final ReaderPalette pal;
+  final double fontSize;
 
   @override
   State<_SentenceTranslation> createState() => _SentenceTranslationState();
@@ -1064,18 +1135,49 @@ class _SentenceTranslationState extends State<_SentenceTranslation> {
 
   @override
   Widget build(BuildContext context) {
+    final fontSz = (widget.fontSize * 0.88).clamp(12.0, 24.0);
     final pt = _pt ?? store.cachedTranslation(widget.sent);
     if (pt != null && pt.isNotEmpty) {
-      return Text(pt, style: T.secondary.copyWith(height: 1.35));
+      return Text(pt,
+          style: T.secondary.copyWith(
+              height: 1.35, color: widget.pal.muted, fontSize: fontSz));
     }
     if (_loading) {
-      return Text('Traduzindo frase…', style: T.caption);
+      return Text('Traduzindo frase…',
+          style: T.caption.copyWith(color: widget.pal.muted));
     }
     return GestureDetector(
       onTap: _fetch,
-      child: Text('Toque para traduzir em PT-BR', style: T.caption),
+      child: Text('Toque para traduzir em PT-BR',
+          style: T.caption.copyWith(color: widget.pal.muted)),
     );
   }
+}
+
+class _PageMarker extends StatelessWidget {
+  const _PageMarker(this.pageNum, this.pal);
+  final int pageNum;
+  final ReaderPalette pal;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: T.s3),
+        child: Row(children: [
+          Expanded(child: Divider(color: pal.divider, thickness: 0.5)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: T.s3),
+            child: Text(
+              'Página $pageNum',
+              style: T.caption.copyWith(
+                color: pal.muted,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          Expanded(child: Divider(color: pal.divider, thickness: 0.5)),
+        ]),
+      );
 }
 
 /// Interactive paragraph section:
@@ -1097,6 +1199,8 @@ class BilingualParagraph extends StatefulWidget {
     this.onTapSentenceAudio,
     this.paraKey,
     this.sentKeyOf,
+    this.pal = ReaderTheme.light,
+    this.fontSize = 17,
   });
   final String text;
   final ValueChanged<String> onTapWord;
@@ -1109,6 +1213,8 @@ class BilingualParagraph extends StatefulWidget {
   final ValueChanged<int>? onTapSentenceAudio;
   final GlobalKey? paraKey;
   final GlobalKey Function(int sentIdx)? sentKeyOf;
+  final ReaderPalette pal;
+  final double fontSize;
 
   @override
   State<BilingualParagraph> createState() => _BilingualParagraphState();
@@ -1135,10 +1241,10 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
       margin: const EdgeInsets.only(bottom: T.s6 + T.s2),
       padding: const EdgeInsets.all(T.s3),
       decoration: BoxDecoration(
-        color: T.surface,
+        color: widget.pal.card,
         borderRadius: BorderRadius.circular(T.rMd),
         border: Border.all(
-          color: hasCursor ? T.lavender : T.hairline,
+          color: hasCursor ? widget.pal.accent : widget.pal.divider,
           width: hasCursor ? 1.5 : 0.5,
         ),
       ),
@@ -1147,9 +1253,10 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
         children: [
           for (final (sIdx, sent) in sentences.indexed) ...[
             if (sIdx > 0)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: T.s4),
-                child: Divider(height: 1, thickness: 0.5, color: T.hairline),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: T.s4),
+                child: Divider(
+                    height: 1, thickness: 0.5, color: widget.pal.divider),
               ),
             Container(
               key: widget.sentKeyOf?.call(sIdx),
@@ -1245,8 +1352,8 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
       padding: const EdgeInsets.symmetric(horizontal: T.s2, vertical: 6),
       decoration: isCurrent
           ? BoxDecoration(
-              color: T.lavender
-                  .withValues(alpha: widget.isPlaying ? 0.28 : 0.14),
+              color: widget.pal.accent
+                  .withValues(alpha: widget.isPlaying ? 0.35 : 0.18),
               borderRadius: BorderRadius.circular(T.rSm),
             )
           : null,
@@ -1274,7 +1381,7 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
                               ? CupertinoIcons.pause_circle
                               : CupertinoIcons.speaker_2),
                       size: 18,
-                      color: isCurrent ? T.text : T.textMuted,
+                      color: isCurrent ? widget.pal.text : widget.pal.muted,
                     ),
                   ),
                 ),
@@ -1305,12 +1412,13 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
                   )
                 : Container(
                     padding: const EdgeInsets.only(left: T.s2),
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       border: Border(
-                        left: BorderSide(color: T.lavender, width: 2),
+                        left: BorderSide(color: widget.pal.accent, width: 2),
                       ),
                     ),
-                    child: _SentenceTranslation(sent),
+                    child: _SentenceTranslation(sent,
+                        pal: widget.pal, fontSize: widget.fontSize),
                   ),
           ),
         ],
@@ -1328,7 +1436,7 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
     final isExactSpoken = isCurrent && curWordIdx != null && curWordIdx == wIdx;
     final isUpcoming = isCurrent && curWordIdx != null && wIdx > curWordIdx;
 
-    final textColor = isUpcoming ? T.textMuted : T.text;
+    final textColor = isUpcoming ? widget.pal.muted : widget.pal.text;
 
     return GestureDetector(
       onTap: wordRe.hasMatch(t) ? () => widget.onTapWord(t) : null,
@@ -1340,7 +1448,7 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
         padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
         decoration: isExactSpoken
             ? BoxDecoration(
-                color: T.lavender,
+                color: widget.pal.accent,
                 borderRadius: BorderRadius.circular(4),
               )
             : (saved
@@ -1355,6 +1463,7 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
             height: 1.5,
             color: textColor,
             fontWeight: FontWeight.w500,
+            fontSize: widget.fontSize,
           ),
         ),
       ),
@@ -1394,6 +1503,12 @@ class _StoryScreenState extends State<StoryScreen> {
   final _paraKeys = <(int, int), GlobalKey>{};
   final _sentKeys = <(int, int, int), GlobalKey>{};
 
+  late String _themeName;
+  late double _fontSize;
+  late List<(int, int)> _starts;
+  DateTime _lastInteraction = DateTime.now();
+  Timer? _readingTimer;
+
   GlobalKey _pKey(int p) => _paraKeys.putIfAbsent((_chap, p), GlobalKey.new);
   GlobalKey _sKey(int p, int s) =>
       _sentKeys.putIfAbsent((_chap, p, s), GlobalKey.new);
@@ -1421,6 +1536,22 @@ class _StoryScreenState extends State<StoryScreen> {
   @override
   void initState() {
     super.initState();
+    _themeName = store.settings['readerTheme'] ?? 'light';
+    _fontSize = double.tryParse(store.settings['readerFont'] ?? '17') ?? 17.0;
+    _starts = pageStarts(widget.b);
+    _lastInteraction = DateTime.now();
+
+    // Counts reading time: while listening OR while reading actively (interaction < 90s).
+    // ponytail: tracks continuous 15s intervals instead of per-sentence to avoid double counting.
+    _readingTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      final now = DateTime.now();
+      final active =
+          _playing || now.difference(_lastInteraction).inSeconds <= 90;
+      if (active) {
+        store.addListen(15);
+      }
+    });
+
     _chap = widget.b.chapterIdx.clamp(0, widget.b.chapters.length - 1);
     final maxP =
         (widget.b.chapters[_chap].paragraphs.length - 1).clamp(0, 999999);
@@ -1468,6 +1599,7 @@ class _StoryScreenState extends State<StoryScreen> {
 
   @override
   void dispose() {
+    _readingTimer?.cancel();
     _runId++;
     _fallbackWordTimer?.cancel();
     tts.setProgressHandler((_, _, _, _) {});
@@ -1614,13 +1746,244 @@ class _StoryScreenState extends State<StoryScreen> {
   }
 
   Future<void> _setChapter(int idx) async {
+    _lastInteraction = DateTime.now();
     await _pauseAudio();
     _paraKeys.clear();
     _sentKeys.clear();
-    setState(() => _chap = idx);
+    setState(() {
+      _chap = idx;
+      _starts = pageStarts(widget.b);
+    });
     _updateCursor(para: 0, sent: 0, word: 0, playing: false);
     if (_scrollCtrl.hasClients) _scrollCtrl.jumpTo(0);
     await _saveCursor(notify: true);
+  }
+
+  Future<void> _jumpToPage(int targetPage) async {
+    _lastInteraction = DateTime.now();
+    if (targetPage < 1 || targetPage > _starts.length) return;
+    final (targetChap, targetPara) = _starts[targetPage - 1];
+    if (targetChap != _chap) {
+      await _setChapter(targetChap);
+    }
+    final paras = widget.b.chapters[targetChap].paragraphs;
+    var seekP = targetPara;
+    while (seekP < paras.length - 1 && paras[seekP].startsWith('[[PDFPAGE:')) {
+      seekP++;
+    }
+    await _seekTo(seekP, 0, autoPlay: false);
+  }
+
+  void _showPageJumpDialog(
+      BuildContext context, int curPage, int totalPages, ReaderPalette pal) {
+    var selected = curPage.toDouble();
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          backgroundColor: pal.card,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(T.rLg)),
+          title: Text('Ir para a página',
+              style: T.title.copyWith(color: pal.text)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Página ${selected.toInt()} de $totalPages',
+                  style: T.body.copyWith(
+                      color: pal.text, fontWeight: FontWeight.w600)),
+              Slider(
+                value: selected,
+                min: 1,
+                max: totalPages.toDouble(),
+                divisions: totalPages > 1 ? totalPages - 1 : 1,
+                activeColor: pal.accent,
+                onChanged: (v) => setDlgState(() => selected = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('Cancelar', style: TextStyle(color: pal.muted)),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _jumpToPage(selected.toInt());
+              },
+              child: Text('Ir',
+                  style: TextStyle(
+                      color: pal.text, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAppearanceSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: ReaderTheme.of(_themeName).card,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          final pal = ReaderTheme.of(_themeName);
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(T.s4, 0, T.s4, T.s5),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Aparência e Leitura',
+                      style: T.title.copyWith(color: pal.text)),
+                  const SizedBox(height: T.s3),
+                  Text('Tema de leitura (Kindle)',
+                      style: T.secondary.copyWith(color: pal.muted)),
+                  const SizedBox(height: T.s2),
+                  Row(
+                    children: [
+                      for (final (mode, label, bg, fg) in [
+                        ('light', 'Claro', T.bg, T.text),
+                        (
+                          'sepia',
+                          'Sépia',
+                          const Color(0xFFF4ECD8),
+                          const Color(0xFF5B4636)
+                        ),
+                        (
+                          'night',
+                          'Noite',
+                          const Color(0xFF1B1916),
+                          const Color(0xFFCDBB9C)
+                        ),
+                      ])
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              setSheetState(() => _themeName = mode);
+                              setState(() => _themeName = mode);
+                              store.set('readerTheme', mode);
+                            },
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(horizontal: 4),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: T.s3),
+                              decoration: BoxDecoration(
+                                color: bg,
+                                borderRadius: BorderRadius.circular(T.rMd),
+                                border: Border.all(
+                                  color: _themeName == mode
+                                      ? pal.accent
+                                      : pal.divider,
+                                  width: _themeName == mode ? 2 : 1,
+                                ),
+                              ),
+                              child: Text(
+                                label,
+                                textAlign: TextAlign.center,
+                                style: T.caption.copyWith(
+                                  color: fg,
+                                  fontWeight: _themeName == mode
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: T.s4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Tamanho da fonte',
+                          style: T.secondary.copyWith(color: pal.muted)),
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: Icon(CupertinoIcons.minus, color: pal.text),
+                            onPressed: _fontSize > 14
+                                ? () {
+                                    final n = _fontSize - 1.5;
+                                    setSheetState(() => _fontSize = n);
+                                    setState(() => _fontSize = n);
+                                    store.set('readerFont', '$n');
+                                  }
+                                : null,
+                          ),
+                          Text('${_fontSize.toStringAsFixed(1)} pt',
+                              style: T.body.copyWith(
+                                  color: pal.text,
+                                  fontWeight: FontWeight.w600)),
+                          IconButton(
+                            icon: Icon(CupertinoIcons.plus, color: pal.text),
+                            onPressed: _fontSize < 26
+                                ? () {
+                                    final n = _fontSize + 1.5;
+                                    setSheetState(() => _fontSize = n);
+                                    setState(() => _fontSize = n);
+                                    store.set('readerFont', '$n');
+                                  }
+                                : null,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: T.s3),
+                  FutureBuilder<List<Map<String, String>>>(
+                    future: getOfflineFrenchVoices(),
+                    builder: (context, snap) {
+                      final voices = snap.data ?? [];
+                      if (voices.isEmpty) return const SizedBox.shrink();
+                      final curVoice = store.settings['ttsVoice'] ?? '';
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Voz da locutora (offline)',
+                              style: T.secondary.copyWith(color: pal.muted)),
+                          const SizedBox(height: T.s1),
+                          Wrap(
+                            spacing: T.s2,
+                            runSpacing: T.s1,
+                            children: [
+                              for (final v in voices.take(5))
+                                ChoiceChip(
+                                  label: Text(
+                                    v['name']?.split('/').last ?? 'Voz',
+                                    style: TextStyle(
+                                      color: curVoice == v['name']
+                                          ? T.text
+                                          : pal.muted,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  selected: curVoice == v['name'],
+                                  selectedColor: pal.accent,
+                                  backgroundColor: pal.card,
+                                  onSelected: (_) async {
+                                    await store.set('ttsVoice', v['name']!);
+                                    await applyTtsVoice(v['name']!);
+                                    setSheetState(() {});
+                                  },
+                                ),
+                            ],
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Future<void> _playFromCurrent() async {
@@ -1661,10 +2024,7 @@ class _StoryScreenState extends State<StoryScreen> {
         final localChunk = (p == _paraIdx && ni == startNat) ? startChunkInNat : 0;
         final wordInChunk = (p == _paraIdx && ni == startNat) ? startW : 0;
 
-        final tokens = <(int chunkIdx, int wordIdx, int charStart, int charEnd)>[];
-        final textParts = <String>[];
-        var charAcc = 0;
-
+        final allTokens = <(int chunkIdx, int wordIdx, String word)>[];
         for (var ci = localChunk; ci < nat.chunkIndices.length; ci++) {
           final cIdx = nat.chunkIndices[ci];
           final words = nat.chunkWords[ci];
@@ -1673,25 +2033,24 @@ class _StoryScreenState extends State<StoryScreen> {
               : 0;
 
           for (var wi = wStart; wi < words.length; wi++) {
-            final tok = words[wi];
-            if (textParts.isNotEmpty) {
-              charAcc += 1;
-            }
-            final sStart = charAcc;
-            final sEnd = sStart + tok.length;
-            charAcc = sEnd;
-            textParts.add(tok);
-            tokens.add((cIdx, wi, sStart, sEnd));
+            allTokens.add((cIdx, wi, words[wi]));
           }
         }
 
-        if (tokens.isEmpty || textParts.isEmpty) continue;
-        final speakText = textParts.join(' ');
+        if (allTokens.isEmpty) continue;
+        final (speakText, ranges) =
+            ttsJoin(allTokens.map((t) => t.$3).toList());
         if (!wordRe.hasMatch(speakText)) continue;
+
+        final tokens = [
+          for (var i = 0; i < allTokens.length; i++)
+            (allTokens[i].$1, allTokens[i].$2, ranges[i].$1, ranges[i].$2)
+        ];
 
         _currentSpokenTokens = tokens;
         final firstTok = tokens.first;
-        _updateCursor(para: p, sent: firstTok.$1, word: firstTok.$2, playing: true);
+        _updateCursor(
+            para: p, sent: firstTok.$1, word: firstTok.$2, playing: true);
         await _saveCursor(notify: false);
         _scrollToCurrent();
 
@@ -1713,14 +2072,22 @@ class _StoryScreenState extends State<StoryScreen> {
           }
         });
 
-        final started = DateTime.now();
+        final hasExclamation = speakText.contains('!');
+        final hasQuestion = speakText.contains('?');
+        final pitch = hasExclamation ? 1.12 : (hasQuestion ? 1.08 : 1.0);
+        await tts.setPitch(pitch);
         await tts.setSpeechRate(_rate);
         await tts.speak(speakText);
+        await tts.setPitch(1.0);
         _fallbackWordTimer?.cancel();
 
         if (!mounted || _runId != myRun || !_playing) return;
-        final sec = DateTime.now().difference(started).inSeconds.clamp(1, 45);
-        await store.addListen(sec);
+
+        if (hasExclamation || hasQuestion || speakText.contains('…')) {
+          await Future.delayed(const Duration(milliseconds: 350));
+        } else if (speakText.contains('.')) {
+          await Future.delayed(const Duration(milliseconds: 150));
+        }
 
         _updateCursor(word: 0);
       }
@@ -1916,35 +2283,53 @@ class _StoryScreenState extends State<StoryScreen> {
   Widget build(BuildContext context) {
     final chapter = widget.b.chapters[_chap];
     final multi = widget.b.chapters.length > 1;
+    final pal = ReaderTheme.of(_themeName);
+
+    final markerForPara = <int, int>{};
+    for (var i = 0; i < _starts.length; i++) {
+      if (_starts[i].$1 == _chap) {
+        markerForPara[_starts[i].$2] = i + 1;
+      }
+    }
 
     return Scaffold(
+      backgroundColor: pal.bg,
       appBar: AppBar(
-        backgroundColor: T.bg,
+        backgroundColor: pal.bg,
         surfaceTintColor: Colors.transparent,
         scrolledUnderElevation: 0,
+        iconTheme: IconThemeData(color: pal.text),
         title: Row(children: [
           LevelChip(widget.b.level),
           const SizedBox(width: T.s2),
           Expanded(
               child: Text(widget.b.title,
                   style: T.body.copyWith(
-                      fontSize: 15, fontWeight: FontWeight.w600),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: pal.text),
                   overflow: TextOverflow.ellipsis)),
         ]),
         actions: [
+          IconButton(
+            tooltip: 'Aparência e Leitura (Kindle, fonte, voz)',
+            icon: const Icon(CupertinoIcons.textformat_size),
+            color: pal.text,
+            onPressed: () => _showAppearanceSheet(context),
+          ),
           IconButton(
             tooltip: _hidePt
                 ? 'Mostrar todas as traduções PT-BR'
                 : 'Modo imersão: ocultar PT-BR até tocar',
             icon: Icon(
               _hidePt ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
-              color: T.text,
+              color: pal.text,
             ),
             onPressed: () => setState(() => _hidePt = !_hidePt),
           ),
           IconButton(
             tooltip: 'Vocabulário deste capítulo',
-            icon: const Icon(CupertinoIcons.sparkles, color: T.text),
+            icon: Icon(CupertinoIcons.sparkles, color: pal.text),
             onPressed: () => _showChapterVocab(context),
           ),
         ],
@@ -1955,20 +2340,23 @@ class _StoryScreenState extends State<StoryScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(T.s4, 0, T.s4, T.s2),
               child: GlassCard(
+                color: pal.card,
                 padding: const EdgeInsets.symmetric(
                     horizontal: T.s2, vertical: T.s1),
                 child: Row(children: [
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    icon: const Icon(CupertinoIcons.chevron_left,
-                        size: 18, color: T.text),
+                    icon: Icon(CupertinoIcons.chevron_left,
+                        size: 18, color: pal.text),
                     onPressed: _chap > 0 ? () => _setChapter(_chap - 1) : null,
                   ),
                   Expanded(
                     child: Text(
                       'Cap. ${_chap + 1}/${widget.b.chapters.length} · ${chapter.title}',
-                      style: T.body
-                          .copyWith(fontSize: 14, fontWeight: FontWeight.w600),
+                      style: T.body.copyWith(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: pal.text),
                       textAlign: TextAlign.center,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -1976,8 +2364,8 @@ class _StoryScreenState extends State<StoryScreen> {
                   ),
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    icon: const Icon(CupertinoIcons.chevron_right,
-                        size: 18, color: T.text),
+                    icon: Icon(CupertinoIcons.chevron_right,
+                        size: 18, color: pal.text),
                     onPressed: _chap < widget.b.chapters.length - 1
                         ? () => _setChapter(_chap + 1)
                         : null,
@@ -1985,7 +2373,7 @@ class _StoryScreenState extends State<StoryScreen> {
                 ]),
               ),
             ),
-          const Divider(height: 1, thickness: 0.5, color: T.hairline),
+          Divider(height: 1, thickness: 0.5, color: pal.divider),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) => SizedBox.expand(
@@ -1994,6 +2382,7 @@ class _StoryScreenState extends State<StoryScreen> {
                   onNotification: (n) {
                     if (n.dragDetails != null) {
                       _lastUserDragAt = DateTime.now();
+                      _lastInteraction = DateTime.now();
                     }
                     return false;
                   },
@@ -2009,31 +2398,46 @@ class _StoryScreenState extends State<StoryScreen> {
                     itemCount: chapter.paragraphs.length,
                     itemBuilder: (context, i) {
                       final para = chapter.paragraphs[i];
-                      return ValueListenableBuilder<PlayCursor>(
-                        valueListenable: _cursor,
-                        builder: (context, cur, _) {
-                          final active = cur.para == i;
-                          return BilingualParagraph(
-                            para,
-                            showAudio: true,
-                            paraKey: _pKey(i),
-                            sentKeyOf: (sIdx) => _sKey(i, sIdx),
-                            activeSentIdx: active ? cur.sent : null,
-                            activeWordIdx: active ? cur.word : null,
-                            isPlaying: active && cur.playing,
-                            hidePt: _hidePt,
-                            onTapSentenceAudio: (sIdx) =>
-                                _seekTo(i, sIdx, autoPlay: true),
-                            onLongPressWord: (sIdx, wIdx) =>
-                                _seekTo(i, sIdx, wIdx: wIdx, autoPlay: true),
-                            onTapWord: (t) async {
-                              if (_playing) await _pauseAudio();
-                              if (context.mounted) {
-                                tapWordInContext(context, t, 'story');
-                              }
+                      final pageNum = markerForPara[i];
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (pageNum != null) _PageMarker(pageNum, pal),
+                          ValueListenableBuilder<PlayCursor>(
+                            valueListenable: _cursor,
+                            builder: (context, cur, _) {
+                              final active = cur.para == i;
+                              return BilingualParagraph(
+                                para,
+                                showAudio: true,
+                                pal: pal,
+                                fontSize: _fontSize,
+                                paraKey: _pKey(i),
+                                sentKeyOf: (sIdx) => _sKey(i, sIdx),
+                                activeSentIdx: active ? cur.sent : null,
+                                activeWordIdx: active ? cur.word : null,
+                                isPlaying: active && cur.playing,
+                                hidePt: _hidePt,
+                                onTapSentenceAudio: (sIdx) {
+                                  _lastInteraction = DateTime.now();
+                                  _seekTo(i, sIdx, autoPlay: true);
+                                },
+                                onLongPressWord: (sIdx, wIdx) {
+                                  _lastInteraction = DateTime.now();
+                                  _seekTo(i, sIdx,
+                                      wIdx: wIdx, autoPlay: true);
+                                },
+                                onTapWord: (t) async {
+                                  _lastInteraction = DateTime.now();
+                                  if (_playing) await _pauseAudio();
+                                  if (context.mounted) {
+                                    tapWordInContext(context, t, 'story');
+                                  }
+                                },
+                              );
                             },
-                          );
-                        },
+                          ),
+                        ],
                       );
                     },
                   ),
@@ -2044,6 +2448,7 @@ class _StoryScreenState extends State<StoryScreen> {
           SafeArea(
             minimum: const EdgeInsets.fromLTRB(T.s4, T.s2, T.s4, T.s3),
             child: GlassCard(
+              color: pal.card,
               padding: const EdgeInsets.symmetric(
                   horizontal: T.s3, vertical: T.s2),
               child: ValueListenableBuilder<PlayCursor>(
@@ -2055,16 +2460,40 @@ class _StoryScreenState extends State<StoryScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Row(children: [
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          icon: Icon(CupertinoIcons.chevron_left,
+                              size: 16, color: pal.text),
+                          onPressed: curPage > 1
+                              ? () => _jumpToPage(curPage - 1)
+                              : null,
+                        ),
                         Expanded(
-                          child: Text(
-                            'Página $curPage de $totalPages',
-                            style: T.body.copyWith(
-                                fontSize: 14, fontWeight: FontWeight.w600),
+                          child: GestureDetector(
+                            onTap: () => _showPageJumpDialog(
+                                context, curPage, totalPages, pal),
+                            child: Text(
+                              'Página $curPage de $totalPages ▾',
+                              textAlign: TextAlign.center,
+                              style: T.body.copyWith(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: pal.text),
+                            ),
                           ),
+                        ),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          icon: Icon(CupertinoIcons.chevron_right,
+                              size: 16, color: pal.text),
+                          onPressed: curPage < totalPages
+                              ? () => _jumpToPage(curPage + 1)
+                              : null,
                         ),
                         GestureDetector(
                           onTap: () => _seekTo(0, 0, autoPlay: false),
-                          child: Text('Início ↺', style: T.caption),
+                          child: Text('Início ↺',
+                              style: T.caption.copyWith(color: pal.muted)),
                         ),
                       ]),
                       const SizedBox(height: T.s1),
@@ -2073,9 +2502,12 @@ class _StoryScreenState extends State<StoryScreen> {
                         children: [
                           IconButton(
                             tooltip: 'Voltar frase anterior',
-                            icon: const Icon(CupertinoIcons.backward_end_fill,
-                                color: T.text),
-                            onPressed: () => _stepSentence(-1),
+                            icon: Icon(CupertinoIcons.backward_end_fill,
+                                color: pal.text),
+                            onPressed: () {
+                              _lastInteraction = DateTime.now();
+                              _stepSentence(-1);
+                            },
                           ),
                           IconButton.filled(
                             tooltip: cur.playing
@@ -2083,7 +2515,7 @@ class _StoryScreenState extends State<StoryScreen> {
                                 : 'Continuar de onde parou',
                             style: IconButton.styleFrom(
                                 backgroundColor:
-                                    cur.playing ? T.rose : T.lavender),
+                                    cur.playing ? T.rose : pal.accent),
                             iconSize: 28,
                             icon: Icon(
                               cur.playing
@@ -2091,13 +2523,19 @@ class _StoryScreenState extends State<StoryScreen> {
                                   : CupertinoIcons.play_fill,
                               color: T.text,
                             ),
-                            onPressed: _togglePlayPause,
+                            onPressed: () {
+                              _lastInteraction = DateTime.now();
+                              _togglePlayPause();
+                            },
                           ),
                           IconButton(
                             tooltip: 'Avançar próxima frase',
-                            icon: const Icon(CupertinoIcons.forward_end_fill,
-                                color: T.text),
-                            onPressed: () => _stepSentence(1),
+                            icon: Icon(CupertinoIcons.forward_end_fill,
+                                color: pal.text),
+                            onPressed: () {
+                              _lastInteraction = DateTime.now();
+                              _stepSentence(1);
+                            },
                           ),
                           TextButton(
                             onPressed: () => setState(() {
@@ -2110,7 +2548,9 @@ class _StoryScreenState extends State<StoryScreen> {
                                   ? '0.75x 🐢'
                                   : (_rate == 0.58 ? '1.25x' : '1.0x'),
                               style: T.body.copyWith(
-                                  fontSize: 14, fontWeight: FontWeight.w600),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: pal.text),
                             ),
                           ),
                         ],

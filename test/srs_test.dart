@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:ui' show Rect;
 
 import 'package:archive/archive.dart';
 import 'package:flutter/material.dart';
@@ -25,12 +24,17 @@ class _FakeStore extends ChangeNotifier implements Store {
   @override
   Vocab get vocab => Vocab(const {'words': [], 'forms': {}});
   @override
+  Map<String, String> get settings => const {};
+  @override
+  List<UserBook> get ebooks => const [];
+  @override
   dynamic noSuchMethod(Invocation invocation) => Future<void>.value();
 }
 
 void main() {
   test('streak: consecutive days, custom goal, freeze, gap breaks', () {
     final now = DateTime(2026, 10, 28, 22);
+    // Legacy days (bothSince not set) can meet goal with reviews OR listenSec:
     const met = (reviews: goalReviews, listenSec: 0);
     const low = (reviews: 10, listenSec: 0);
 
@@ -53,6 +57,38 @@ void main() {
     final withGap = {'2026-10-28': met, '2026-10-26': met};
     expect(streak(withGap, now, freeze: false), 1);
     expect(streak(withGap, now, freeze: true), 2);
+  });
+
+  test('metGoal and goalProgress: respects both flag and bothSince cutoff', () {
+    const fullRev = (reviews: goalReviews, listenSec: 0);
+    const fullLis = (reviews: 0, listenSec: goalListenSec);
+    const bothDone = (reviews: goalReviews, listenSec: goalListenSec);
+    const halfBoth = (reviews: 10, listenSec: 300);
+
+    // Legacy (either OR):
+    expect(metGoal(fullRev, both: false), isTrue);
+    expect(metGoal(fullLis, both: false), isTrue);
+    expect(goalProgress(fullRev, both: false), 1.0);
+
+    // New rule (both AND):
+    expect(metGoal(fullRev, both: true), isFalse);
+    expect(metGoal(fullLis, both: true), isFalse);
+    expect(metGoal(bothDone, both: true), isTrue);
+    expect(goalProgress(halfBoth, both: true), closeTo(0.5, 0.01));
+    expect(goalProgress(fullRev, both: true), closeTo(0.5, 0.01));
+
+    // Streak with bothSince:
+    final now = DateTime(2026, 11, 4);
+    // Prior to bothSince, fullRev counted; on/after bothSince, bothDone is required:
+    final acts = {
+      '2026-11-02': fullRev,
+      '2026-11-03': fullRev,
+      '2026-11-04': bothDone,
+    };
+    // If bothSince is '2026-11-04', then 11-02 and 11-03 are legacy OK -> streak = 3
+    expect(streak(acts, now, bothSince: '2026-11-04'), 3);
+    // If bothSince was active since '2026-11-02', 11-03 didn't meet both -> streak = 1 (today only)
+    expect(streak(acts, now, bothSince: '2026-11-02'), 1);
   });
 
   test('FSRS: Good grows interval, Again resets', () {
@@ -178,8 +214,8 @@ void main() {
         (
           title: 'Chap 1',
           paragraphs: [
-            // 200 words -> ~ 2 pages
-            List.filled(200, 'mot').join(' '),
+            List.filled(160, 'mot').join(' '),
+            List.filled(100, 'mot').join(' '),
           ],
         ),
       ],
@@ -194,8 +230,94 @@ void main() {
     expect(total, greaterThanOrEqualTo(2));
   });
 
-  test('grammar: validates 7 core modules and interactive quiz answers', () {
-    expect(grammarTopics.length, 7);
+  test('ttsJoin: prevents floating punctuation before ! ? : ; and aligns token spans', () {
+    final words = ['«', 'Bonjour', '!', 'Comment', 'allez-vous', '?', '»'];
+    final joined = ttsJoin(words);
+    // ! and ? are glued to previous tokens, « has space after, » glued to preceding punctuation
+    expect(joined.$1, '« Bonjour! Comment allez-vous?»');
+    expect(joined.$2.length, words.length);
+    for (var i = 0; i < words.length; i++) {
+      final span = joined.$2[i];
+      final extracted = joined.$1.substring(span.$1, span.$2);
+      expect(extracted, words[i]);
+    }
+  });
+
+  test('pageStarts: chunks book paragraphs into virtual pages', () {
+    final UserBook book = (
+      id: 1,
+      title: 'Virtual Pages Book',
+      level: 'A1',
+      chapters: [
+        (
+          title: 'Chap 1',
+          paragraphs: [
+            List.filled(100, 'mot').join(' '), // 100 words (page 1)
+            List.filled(100, 'mot').join(' '), // +100 words -> 200 words >= 160 threshold (starts page 2 on next)
+            List.filled(50, 'mot').join(' '),  // page 2
+          ],
+        ),
+        (
+          title: 'Chap 2',
+          paragraphs: [
+            List.filled(50, 'mot').join(' '),
+          ],
+        ),
+      ],
+      chapterIdx: 0,
+      paraIdx: 0,
+      sentIdx: 0,
+      wordIdx: 0,
+    );
+
+    final starts = pageStarts(book);
+    expect(starts.isNotEmpty, isTrue);
+    expect(starts.first.$1, 0);
+    expect(starts.first.$2, 0);
+    expect(starts.length, greaterThanOrEqualTo(2));
+  });
+
+  test('pageStarts: PDF with [[PDFPAGE:i]] markers matches exact 1:1 real PDF pages', () {
+    final UserBook pdfBook = (
+      id: 2,
+      title: 'Original Document.pdf',
+      level: 'B1',
+      chapters: [
+        (
+          title: 'Páginas 1–3',
+          paragraphs: [
+            '[[PDFPAGE:0]]',
+            'Texte de la page 1 du PDF.',
+            '[[PDFPAGE:1]]',
+            'Texte de la page 2 du PDF.',
+            'Texte additionnel de la page 2.',
+            '[[PDFPAGE:2]]',
+            'Texte de la page 3 du PDF finale.',
+          ],
+        ),
+      ],
+      chapterIdx: 0,
+      paraIdx: 0,
+      sentIdx: 0,
+      wordIdx: 0,
+    );
+
+    final starts = pageStarts(pdfBook);
+    expect(starts.length, 3);
+    expect(starts[0], (0, 0)); // Page 1 starts at [[PDFPAGE:0]]
+    expect(starts[1], (0, 2)); // Page 2 starts at [[PDFPAGE:1]]
+    expect(starts[2], (0, 5)); // Page 3 starts at [[PDFPAGE:2]]
+
+    // bookPageInfo returns exact corresponding PDF page:
+    expect(bookPageInfo(pdfBook, 0, 0), (1, 3));
+    expect(bookPageInfo(pdfBook, 0, 1), (1, 3));
+    expect(bookPageInfo(pdfBook, 0, 3), (2, 3));
+    expect(bookPageInfo(pdfBook, 0, 4), (2, 3));
+    expect(bookPageInfo(pdfBook, 0, 6), (3, 3));
+  });
+
+  test('grammar: validates 14 modules, exercises, and conjDrill generator', () {
+    expect(grammarTopics.length, 14);
     for (final t in grammarTopics) {
       expect(t.id.isNotEmpty, isTrue);
       expect(t.title.isNotEmpty, isTrue);
@@ -214,6 +336,19 @@ void main() {
         }
       }
     }
+
+    // Dynamic conjugation drill
+    final drillExercises = conjDrill(['etre', 'avoir', 'aller', 'faire'], 8);
+    expect(drillExercises.length, 8);
+    for (final ex in drillExercises) {
+      expect(ex.options.contains(ex.solution), isTrue);
+      expect(ex.hint, isNotNull);
+      expect(ex.hint!.contains('Tabela de'), isTrue);
+    }
+
+    final drillTopic = conjDrillTopic(n: 5);
+    expect(drillTopic.id.startsWith('drill_conj_'), isTrue);
+    expect(drillTopic.exercises.length, 5);
   });
 
   testWidgets('Moto Edge 70 Fusion: zero text clipped at top during reading, auto-scroll and reset', (tester) async {
@@ -263,7 +398,8 @@ void main() {
     final firstParaFinder = find.byType(BilingualParagraph).first;
     final firstParaBox = tester.renderObject<RenderBox>(firstParaFinder);
     final initTop = firstParaBox.localToGlobal(Offset.zero, ancestor: listBox).dy;
-    expect(initTop, equals(32.0));
+    // Offset accounts for the top Page 1 marker header:
+    expect(initTop, equals(75.0));
 
     for (var step = 1; step <= 12; step++) {
       await tester.tap(find.byTooltip('Avançar próxima frase'));
@@ -285,7 +421,7 @@ void main() {
 
     final resetParaBox = tester.renderObject<RenderBox>(firstParaFinder);
     final resetTop = resetParaBox.localToGlobal(Offset.zero, ancestor: listBox).dy;
-    expect(resetTop, equals(32.0));
+    expect(resetTop, equals(75.0));
 
     for (var step = 1; step <= 10; step++) {
       await tester.tap(find.byTooltip('Avançar próxima frase'));

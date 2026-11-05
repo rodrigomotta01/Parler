@@ -1,8 +1,11 @@
+import 'dart:math';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart';
+
 import '../main.dart';
 import '../ui.dart';
+import 'review.dart' show speakFr;
 
 enum ExerciseType { sentenceBuilder, fillBlank, tenseCheck }
 
@@ -15,6 +18,7 @@ class GrammarExercise {
     required this.solution,
     this.options = const [],
     required this.explanation,
+    this.hint,
   });
 
   final ExerciseType type;
@@ -24,6 +28,339 @@ class GrammarExercise {
   final dynamic solution; // List<String> for sentenceBuilder, String for choice
   final List<String> options;
   final String explanation;
+  final String? hint;
+}
+
+const conjPronouns = ['je', 'tu', 'il/elle', 'nous', 'vous', 'ils/elles'];
+
+const conjTable = <String, Map<String, List<String>>>{
+  'être': {
+    'Présent': ['suis', 'es', 'est', 'sommes', 'êtes', 'sont'],
+    'Passé composé': [
+      'ai été',
+      'as été',
+      'a été',
+      'avons été',
+      'avez été',
+      'ont été'
+    ],
+    'Imparfait': ['étais', 'étais', 'était', 'étions', 'étiez', 'étaient'],
+    'Futur simple': ['serai', 'seras', 'sera', 'serons', 'serez', 'seront'],
+  },
+  'avoir': {
+    'Présent': ['ai', 'as', 'a', 'avons', 'avez', 'ont'],
+    'Passé composé': [
+      'ai eu',
+      'as eu',
+      'a eu',
+      'avons eu',
+      'avez eu',
+      'ont eu'
+    ],
+    'Imparfait': ['avais', 'avais', 'avait', 'avions', 'aviez', 'avaient'],
+    'Futur simple': ['aurai', 'auras', 'aura', 'aurons', 'aurez', 'auront'],
+  },
+  'aller': {
+    'Présent': ['vais', 'vas', 'va', 'allons', 'allez', 'vont'],
+    'Passé composé': [
+      'suis allé(e)',
+      'es allé(e)',
+      'est allé(e)',
+      'sommes allé(e)s',
+      'êtes allé(e)s',
+      'sont allé(e)s'
+    ],
+    'Imparfait': ['allais', 'allais', 'allait', 'allions', 'alliez', 'allaient'],
+    'Futur simple': ['irai', 'iras', 'ira', 'irons', 'irez', 'iront'],
+  },
+  'faire': {
+    'Présent': ['fais', 'fais', 'fait', 'faisons', 'faites', 'font'],
+    'Passé composé': [
+      'ai fait',
+      'as fait',
+      'a fait',
+      'avons fait',
+      'avez fait',
+      'ont fait'
+    ],
+    'Imparfait': [
+      'faisais',
+      'faisais',
+      'faisait',
+      'faisions',
+      'faisiez',
+      'faisaient'
+    ],
+    'Futur simple': ['ferai', 'feras', 'fera', 'ferons', 'ferez', 'feront'],
+  },
+  'pouvoir': {
+    'Présent': ['peux', 'peux', 'peut', 'pouvons', 'pouvez', 'peuvent'],
+    'Passé composé': ['ai pu', 'as pu', 'a pu', 'avons pu', 'avez pu', 'ont pu'],
+    'Imparfait': [
+      'pouvais',
+      'pouvais',
+      'pouvait',
+      'pouvions',
+      'pouviez',
+      'pouvaient'
+    ],
+    'Futur simple': [
+      'pourrai',
+      'pourras',
+      'pourra',
+      'pourrons',
+      'pourrez',
+      'pourront'
+    ],
+  },
+  'vouloir': {
+    'Présent': ['veux', 'veux', 'veut', 'voulons', 'voulez', 'veulent'],
+    'Passé composto': [
+      'ai voulu',
+      'as voulu',
+      'a voulu',
+      'avons voulu',
+      'avez voulu',
+      'ont voulu'
+    ],
+    'Imparfait': [
+      'voulais',
+      'voulais',
+      'voulait',
+      'voulions',
+      'vouliez',
+      'voulaient'
+    ],
+    'Futur simple': [
+      'voudrai',
+      'voudras',
+      'voudra',
+      'voudrons',
+      'voudrez',
+      'voudront'
+    ],
+  },
+  'devoir': {
+    'Présent': ['dois', 'dois', 'doit', 'devons', 'devez', 'doivent'],
+    'Passé composé': ['ai dû', 'as dû', 'a dû', 'avons dû', 'avez dû', 'ont dû'],
+    'Imparfait': ['devais', 'devais', 'devait', 'devions', 'deviez', 'devaient'],
+    'Futur simple': ['devrai', 'devras', 'devra', 'devrons', 'devrez', 'devront'],
+  },
+  'savoir': {
+    'Présent': ['sais', 'sais', 'sait', 'savons', 'savez', 'savent'],
+    'Passé composé': ['ai su', 'as su', 'a su', 'avons su', 'avez su', 'ont su'],
+    'Imparfait': ['savais', 'savais', 'savait', 'savions', 'saviez', 'savaient'],
+    'Futur simple': ['saurai', 'sauras', 'saura', 'saurons', 'saurez', 'sauront'],
+  },
+  'venir': {
+    'Présent': ['viens', 'viens', 'vient', 'venons', 'venez', 'viennent'],
+    'Passé composé': [
+      'suis venu(e)',
+      'es venu(e)',
+      'est venu(e)',
+      'sommes venu(e)s',
+      'êtes venu(e)s',
+      'sont venu(e)s'
+    ],
+    'Imparfait': ['venais', 'venais', 'venait', 'venions', 'veniez', 'venaient'],
+    'Futur simple': [
+      'viendrai',
+      'viendras',
+      'viendra',
+      'viendrons',
+      'viendrez',
+      'viendront'
+    ],
+  },
+  'prendre': {
+    'Présent': ['prends', 'prends', 'prend', 'prenons', 'prenez', 'prennent'],
+    'Passé composé': [
+      'ai pris',
+      'as pris',
+      'a pris',
+      'avons pris',
+      'avez pris',
+      'ont pris'
+    ],
+    'Imparfait': [
+      'prenais',
+      'prenais',
+      'prenait',
+      'prenions',
+      'preniez',
+      'prenaient'
+    ],
+    'Futur simple': [
+      'prendrai',
+      'prendras',
+      'prendra',
+      'prendrons',
+      'prendrez',
+      'prendront'
+    ],
+  },
+  'dire': {
+    'Présent': ['dis', 'dis', 'dit', 'disons', 'dites', 'disent'],
+    'Passé composé': [
+      'ai dit',
+      'as dit',
+      'a dit',
+      'avons dit',
+      'avez dit',
+      'ont dit'
+    ],
+    'Imparfait': ['disais', 'disais', 'disait', 'disions', 'disiez', 'disaient'],
+    'Futur simple': ['dirai', 'diras', 'dira', 'dirons', 'direz', 'diront'],
+  },
+  'voir': {
+    'Présent': ['vois', 'vois', 'voit', 'voyons', 'voyez', 'voient'],
+    'Passé composé': [
+      'ai vu',
+      'as vu',
+      'a vu',
+      'avons vu',
+      'avez vu',
+      'ont vu'
+    ],
+    'Imparfait': ['voyais', 'voyais', 'voyait', 'voyions', 'voyiez', 'voyaient'],
+    'Futur simple': ['verrai', 'verras', 'verra', 'verrons', 'verrez', 'verront'],
+  },
+  'parler': {
+    'Présent': ['parle', 'parles', 'parle', 'parlons', 'parlez', 'parlent'],
+    'Passé composé': [
+      'ai parlé',
+      'as parlé',
+      'a parlé',
+      'avons parlé',
+      'avez parlé',
+      'ont parlé'
+    ],
+    'Imparfait': [
+      'parlais',
+      'parlais',
+      'parlait',
+      'parlions',
+      'parliez',
+      'parlaient'
+    ],
+    'Futur simple': [
+      'parlerai',
+      'parleras',
+      'parlera',
+      'parlerons',
+      'parlerez',
+      'parleront'
+    ],
+  },
+  'finir': {
+    'Présent': ['finis', 'finis', 'finit', 'finissons', 'finissez', 'finissent'],
+    'Passé composé': [
+      'ai fini',
+      'as fini',
+      'a fini',
+      'avons fini',
+      'avez fini',
+      'ont fini'
+    ],
+    'Imparfait': [
+      'finissais',
+      'finissais',
+      'finissait',
+      'finissions',
+      'finissiez',
+      'finissaient'
+    ],
+    'Futur simple': [
+      'finirai',
+      'finiras',
+      'finira',
+      'finirons',
+      'finirez',
+      'finiront'
+    ],
+  },
+};
+
+List<GrammarExercise> conjDrill(List<String> verbs, int n) {
+  final rng = Random();
+  final list = <GrammarExercise>[];
+  final validVerbs = verbs.where((v) => conjTable.containsKey(v)).toList();
+  if (validVerbs.isEmpty) return const [];
+
+  final subjects = [
+    ('Je', 0),
+    ('Tu', 1),
+    ('Il', 2),
+    ('Elle', 2),
+    ('Nous', 3),
+    ('Vous', 4),
+    ('Ils', 5),
+    ('Elles', 5),
+  ];
+
+  for (var i = 0; i < n; i++) {
+    final v = validVerbs[rng.nextInt(validVerbs.length)];
+    final tenses = conjTable[v]!.keys.toList();
+    final tense = tenses[rng.nextInt(tenses.length)];
+    final forms = conjTable[v]![tense]!;
+    final (subj, pIdx) = subjects[rng.nextInt(subjects.length)];
+    final solution = forms[pIdx];
+
+    final opts = <String>{solution};
+    for (final f in forms) {
+      if (opts.length >= 4) break;
+      opts.add(f);
+    }
+    for (final otherTense in tenses) {
+      for (final f in conjTable[v]![otherTense]!) {
+        if (opts.length >= 4) break;
+        opts.add(f);
+      }
+    }
+
+    final tableSummary = [
+      for (var pi = 0; pi < 6; pi++) '${conjPronouns[pi]} ${forms[pi]}'
+    ].join('\n');
+
+    final pronounLead = (pIdx == 0 &&
+            solution.startsWith(RegExp(r'[aeiouhéèê]', caseSensitive: false)))
+        ? "J'"
+        : '$subj ';
+
+    list.add(GrammarExercise(
+      type: ExerciseType.fillBlank,
+      prompt: 'Conjugue o verbo « $v » ($tense):',
+      subprompt: '${pronounLead}___ ($v)',
+      solution: solution,
+      options: opts.toList()..shuffle(rng),
+      explanation:
+          'Excelente! A forma correta para $subj no $tense é « $solution ».',
+      hint: 'Tabela de $v ($tense):\n$tableSummary',
+    ));
+  }
+  return list;
+}
+
+GrammarTopic conjDrillTopic({int n = 10, List<String>? verbs}) {
+  final targetVerbs = verbs ?? conjTable.keys.toList();
+  return GrammarTopic(
+    id: 'drill_conj_${DateTime.now().millisecondsSinceEpoch}',
+    title: 'Treino de Conjugação',
+    level: 'Drill',
+    icon: CupertinoIcons.arrow_2_circlepath,
+    summary: 'Treino rápido e infinito com os principais verbos e tempos.',
+    sections: const [
+      GrammarSection(
+        title: 'Como funciona o Drill',
+        content:
+            'Cada questão sorteia um verbo essencial (être, avoir, aller, faire, poder, etc.) e um tempo verbal.\n\n'
+            'Se errar, a conjugação completa do tempo aparece imediatamente como dica para fixação rápida.',
+        callout: 'Cada rodada de 10 exercícios concluída conta como +1 na sua meta de revisão diária!',
+      ),
+    ],
+    examples: const [],
+    exercises: conjDrill(targetVerbs, n),
+  );
 }
 
 class GrammarExample {
@@ -507,10 +844,400 @@ final grammarTopics = <GrammarTopic>[
       ),
     ],
   ),
+  GrammarTopic(
+    id: 'etre_deep',
+    title: 'Être a Fundo (Ser e Estar)',
+    level: 'A1',
+    icon: CupertinoIcons.sparkles,
+    summary: 'Liaison fonética (ils sont vs ils ont), expressões vitais e tempos do être.',
+    sections: const [
+      GrammarSection(
+        title: '1. O som de S vs Z: nunca confunda!',
+        content:
+            'A maior pegadinha fonética em francês:\n'
+            '• Ils sont (Eles são / estão) → som de "S" limpo (/il sɔ̃/).\n'
+            '• Ils ont (Eles têm - do verbo avoir) → som de "Z" da ligação (/il zɔ̃/).\n\n'
+            'Além disso, a ligação é obrigatória com "vous":\n'
+            '• Vous êtes (/vu zɛt/) — o "s" conecta com som de "z".',
+        callout: 'Regra de ouro: "Ils sont" tem som de cobra (S); "Ils ont" tem som de abelha (Z)!',
+      ),
+      GrammarSection(
+        title: '2. Expressões indispensáveis com Être',
+        content:
+            '• Être d\'accord (concordar): "Je suis d\'accord."\n'
+            '• Être en retard (estar atrasado): "Il est en retard."\n'
+            '• Être en avance (estar adiantado): "Tu es en avance."\n'
+            '• Être en train de + infinitif (estar fazendo agora): "Je suis en train de manger."\n'
+            '• C\'est vs Il est: "C\'est" para coisas/apresentações ("C\'est bon", "C\'est Paul"); "Il est" para profissões e horas ("Il est médecin", "Il est midi").',
+      ),
+    ],
+    examples: const [
+      GrammarExample(fr: 'Je suis très heureux.', pt: 'Eu estou muito feliz.'),
+      GrammarExample(fr: 'Vous êtes prêts ?', pt: 'Vocês estão prontos ?'),
+      GrammarExample(fr: 'Ils sont à Paris.', pt: 'Eles estão em Paris.'),
+      GrammarExample(fr: "Je suis d'accord avec toi.", pt: 'Eu concordo com você.'),
+      GrammarExample(fr: 'Il est en retard ce matin.', pt: 'Ele está atrasado esta manhã.'),
+      GrammarExample(fr: 'Hier, j\'étais fatigué.', pt: 'Ontem, eu estava cansado.'),
+    ],
+    exercises: [
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Qual a forma correta para "Eles estão"?',
+        subprompt: 'Ils ___ à la maison.',
+        options: ['sont', 'ont', 'sommes', 'êtes'],
+        solution: 'sont',
+        explanation: 'Perfeito! "Ils sont" (/s/) = eles são/estão. "Ils ont" (/z/) = eles têm.',
+        hint: 'Présent de ÊTRE:\nje suis, tu es, il est, nous sommes, vous êtes, ils sont.',
+      ),
+      const GrammarExercise(
+        type: ExerciseType.sentenceBuilder,
+        prompt: 'Monte a expressão de concordar:',
+        subprompt: 'Eu concordo com você.',
+        tokens: ['Je', 'suis', "d'accord", 'avec', 'toi'],
+        solution: ['Je', 'suis', "d'accord", 'avec', 'toi'],
+        explanation: 'Excelente! "Être d\'accord" é a fórmula mais comum para dizer concordo.',
+      ),
+      ...conjDrill(['être'], 3),
+    ],
+  ),
+  GrammarTopic(
+    id: 'avoir_aller_faire',
+    title: 'Avoir, Aller e Faire a Fundo',
+    level: 'A1',
+    icon: CupertinoIcons.flame_fill,
+    summary: 'Expressões essenciais de sensação, planos imediatos e tarefas do dia a dia.',
+    sections: const [
+      GrammarSection(
+        title: '1. As fórmulas mágicas com Avoir',
+        content:
+            'Além de idade e fome/sede, use avoir para:\n'
+            '• Avoir besoin de (precisar de): "J\'ai besoin d\'aide."\n'
+            '• Avoir envie de (estar com vontade de): "J\'ai envie d\'un café."\n'
+            '• Avoir mal à (estar com dor em): "J\'ai mal à la tête."\n'
+            '• Il y a (há / tem / faz tempo): "Il y a du pain."',
+      ),
+      GrammarSection(
+        title: '2. Aller e Faire no cotidiano',
+        content:
+            '• Aller para saúde e cumprimento: "Comment ça va ?" → "Je vais bien !"\n'
+            '• Aller + infinitif para o futuro imediato: "Je vais partir."\n'
+            '• Faire para clima: "Il fait beau", "Il fait froid."\n'
+            '• Faire para compras e esportes: "Faire les courses", "Faire du vélo."',
+      ),
+    ],
+    examples: const [
+      GrammarExample(fr: "J'ai besoin d'eau.", pt: 'Preciso de água.'),
+      GrammarExample(fr: "J'ai envie de dormir.", pt: 'Estou com vontade de dormir.'),
+      GrammarExample(fr: 'Comment allez-vous ?', pt: 'Como o senhor vai?'),
+      GrammarExample(fr: 'Je vais manger une pomme.', pt: 'Vou comer uma maçã.'),
+      GrammarExample(fr: 'Il fait très beau aujourd\'hui.', pt: 'Está muito bonito o dia hoje.'),
+    ],
+    exercises: [
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Complete com a expressão de "precisar":',
+        subprompt: "J'___ besoin de repos.",
+        options: ['ai', 'suis', 'vais', 'fais'],
+        solution: 'ai',
+        explanation: 'Exato! "Avoir besoin de" usa o verbo avoir: j\'ai besoin.',
+        hint: 'Avoir: j\'ai, tu as, il a, nous avons, vous avez, ils ont.',
+      ),
+      const GrammarExercise(
+        type: ExerciseType.sentenceBuilder,
+        prompt: 'Monte a frase de futuro:',
+        subprompt: 'Nós vamos viajar amanhã.',
+        tokens: ['Nous', 'allons', 'voyager', 'demain'],
+        solution: ['Nous', 'allons', 'voyager', 'demain'],
+        explanation: 'Muito bem! Aller no presente + infinitivo forma o futuro imediato.',
+      ),
+      ...conjDrill(['avoir', 'aller', 'faire'], 3),
+    ],
+  ),
+  GrammarTopic(
+    id: 'main_irregulars',
+    title: 'Verbos Modais e Irregulares Essenciais',
+    level: 'A2',
+    icon: CupertinoIcons.gear_alt_fill,
+    summary: 'Pouvoir, vouloir, devoir, savoir, prendre e venir no presente e passado.',
+    sections: const [
+      GrammarSection(
+        title: '1. O trio modal: Pouvoir, Vouloir, Devoir',
+        content:
+            'Esses 3 verbos conectam direto com outro verbo no infinitivo:\n'
+            '• Pouvoir (Poder): Je peux, tu peux, il peut, nous pouvons, vous pouvez, ils peuvent.\n'
+            '  "Je peux vous aider ?" (Posso te ajudar?)\n\n'
+            '• Vouloir (Querer): Je veux, tu veux, il veut, nous voulons, vous voulez, ils veulent.\n'
+            '  "Je veux apprendre." (Quero aprender.)\n\n'
+            '• Devoir (Dever/Ter que): Je dois, tu dois, il doit, nous devons, vous devez, ils doivent.\n'
+            '  "Je dois partir." (Tenho que ir.)',
+      ),
+      GrammarSection(
+        title: '2. Savoir vs Connaître & Prendre',
+        content:
+            '• Savoir = saber fatos ou saber fazer algo (+ verbo): "Je sais nager."\n'
+            '• Connaître = conhecer pessoas ou lugares (+ substantivo): "Je connais Paris."\n'
+            '• Prendre = pegar, tomar, comer: "Je prends un café."',
+      ),
+    ],
+    examples: const [
+      GrammarExample(fr: 'Tu peux m\'aider ?', pt: 'Você pode me ajudar?'),
+      GrammarExample(fr: 'Je veux parler français.', pt: 'Quero falar francês.'),
+      GrammarExample(fr: 'Nous devons étudier.', pt: 'Devemos estudar.'),
+      GrammarExample(fr: 'Je sais cuisiner.', pt: 'Sei cozinhar.'),
+      GrammarExample(fr: 'Je prends le train.', pt: 'Pego o trem.'),
+    ],
+    exercises: [
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Complete com "você pode":',
+        subprompt: 'Tu ___ venir avec nous ?',
+        options: ['peux', 'veus', 'dois', 'sais'],
+        solution: 'peux',
+        explanation: 'Correto! Pouvoir com tu é "tu peux".',
+        hint: 'Pouvoir: je peux, tu peux, il peut, nous pouvons, vous pouvez, ils peuvent.',
+      ),
+      const GrammarExercise(
+        type: ExerciseType.sentenceBuilder,
+        prompt: 'Monte a frase:',
+        subprompt: 'Eu tenho que trabalhar agora.',
+        tokens: ['Je', 'dois', 'travailler', 'maintenant'],
+        solution: ['Je', 'dois', 'travailler', 'maintenant'],
+        explanation: 'Perfeito! Devoir (dois) + infinitif (travailler).',
+      ),
+      ...conjDrill(['pouvoir', 'vouloir', 'devoir', 'savoir', 'prendre'], 3),
+    ],
+  ),
+  GrammarTopic(
+    id: 'pc_etre_avoir',
+    title: 'Passé Composé: Être ou Avoir?',
+    level: 'A2',
+    icon: CupertinoIcons.checkmark_shield_fill,
+    summary: 'A casa do être (verbos de movimento), concordância de gênero/número e a regra geral com avoir.',
+    sections: const [
+      GrammarSection(
+        title: '1. A regra de ouro do auxiliar',
+        content:
+            'A imensa maioria (95%) dos verbos no Passé Composé usa AVOIR:\n'
+            '• J\'ai mangé (Eu comi)\n'
+            '• Tu as parlé (Você falou)\n'
+            '• Nous avons fini (Nós terminamos)\n\n'
+            'Com Avoir, o particípio NÃO muda de acordo com o sujeito: "Elle a mangé", "Ils ont parlé".',
+      ),
+      GrammarSection(
+        title: '2. A Casa do Être e a concordância',
+        content:
+            'Apenas verbos de movimento/mudança de estado usam ÊTRE:\n'
+            'Aller, venir, partir, arriver, entrer, sortir, monter, descendre, naître, mourir, rester, tomber, retourner.\n\n'
+            'COM ÊTRE A CONCORDÂNCIA É OBRIGATÓRIA:\n'
+            '• Il est allé (Ele foi)\n'
+            '• Elle est allée (+e feminino)\n'
+            '• Ils sont allés (+s masculino plural)\n'
+            '• Elles sont allées (+es feminino plural)',
+      ),
+    ],
+    examples: const [
+      GrammarExample(fr: "J'ai regardé un film.", pt: 'Assisti a um filme.', note: 'Auxiliar Avoir'),
+      GrammarExample(fr: 'Elle est venue hier.', pt: 'Ela veio ontem.', note: 'Auxiliar Être (+e)'),
+      GrammarExample(fr: 'Ils sont partis tôt.', pt: 'Eles partiram cedo.', note: 'Auxiliar Être (+s)'),
+      GrammarExample(fr: 'Nous sommes restés ici.', pt: 'Ficamos aqui.', note: 'Être (+s)'),
+    ],
+    exercises: [
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Qual o auxiliar correto para o verbo "partir"?',
+        subprompt: 'Elle ___ partie à six heures.',
+        options: ['est', 'a', 'va', 'fait'],
+        solution: 'est',
+        explanation: 'Exato! Partir é verbo de movimento e usa ÊTRE (com +e concordando com elle).',
+        hint: 'Verbos com Être: aller, venir, partir, arriver, rester, sortir...',
+      ),
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Complete com o particípio concordado no feminino plural:',
+        subprompt: 'Elles sont ___ à Paris. (arriver)',
+        options: ['arrivées', 'arrivé', 'arrivée', 'arrivés'],
+        solution: 'arrivées',
+        explanation: 'Muito bem! Com Être, "Elles" pede feminino (+e) e plural (+s): arrivées.',
+      ),
+      const GrammarExercise(
+        type: ExerciseType.sentenceBuilder,
+        prompt: 'Monte a frase no passado:',
+        subprompt: 'Nós comemos uma maçã.',
+        tokens: ['Nous', 'avons', 'mangé', 'une', 'pomme'],
+        solution: ['Nous', 'avons', 'mangé', 'une', 'pomme'],
+        explanation: 'Perfeito! Manger usa Avoir (avons mangé).',
+      ),
+    ],
+  ),
+  GrammarTopic(
+    id: 'imparfait',
+    title: 'Imparfait vs Passé Composé',
+    level: 'A2',
+    icon: CupertinoIcons.clock,
+    summary: 'Cenário de fundo e hábitos passados vs ação pontual que aconteceu.',
+    sections: const [
+      GrammarSection(
+        title: '1. O filme vs a foto',
+        content:
+            '• Imparfait é o FILME / CENÁRIO: descreve o que estava acontecendo, o clima, sentimentos ou hábitos passados.\n'
+            '  "Il faisait beau et je marchais dans la rue." (Estava bonito e eu caminhava...)\n\n'
+            '• Passé Composé é o FLASH / AÇÃO: o que interrompeu o cenário, o evento pontual.\n'
+            '  "Soudain, j\'ai vu un ami !" (De repente, vi um amigo!)',
+      ),
+      GrammarSection(
+        title: '2. Como formar o Imparfait',
+        content:
+            'Pegue a forma de "nous" no presente, retire "-ons" e coloque as terminações:\n'
+            '-ais, -ais, -ait, -ions, -iez, -aient (as 3 primeiras e a última soam IDÊNTICAS: /ɛ/)!\n\n'
+            'Única exceção de radical: Être → radical "ét-" (j\'étais, tu étais, il était...).',
+      ),
+    ],
+    examples: const [
+      GrammarExample(fr: 'Quand j\'étais jeune, je lisais beaucoup.', pt: 'Quando eu era jovem, eu lia muito.'),
+      GrammarExample(fr: 'Il pleuvait ce matin.', pt: 'Chovia esta manhã.'),
+      GrammarExample(fr: 'Je dormais quand tu as appelé.', pt: 'Eu dormia quando você ligou.'),
+      GrammarExample(fr: 'Hier, j\'ai acheté un livre.', pt: 'Ontem, comprei um livro.'),
+    ],
+    exercises: [
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Complete a descrição no passado:',
+        subprompt: "Hier, il ___ très froid.",
+        options: ['faisait', 'a fait', 'fait', 'fera'],
+        solution: 'faisait',
+        explanation: 'Muito bem! Descrição de tempo/clima no passado usa o Imparfait (faisait).',
+        hint: 'Terminações do Imparfait: -ais, -ais, -ait, -ions, -iez, -aient.',
+      ),
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Qual tempo representa a ação que interrompe?',
+        subprompt: "Je lisais quand le téléphone ___.",
+        options: ['a sonné', 'sonnait', 'sonne', 'sonnera'],
+        solution: 'a sonné',
+        explanation: 'Exato! A ação pontual que interrompe o cenário vai para o Passé Composé.',
+      ),
+      ...conjDrill(['être', 'avoir', 'faire', 'parler'], 3),
+    ],
+  ),
+  GrammarTopic(
+    id: 'futur_simple',
+    title: 'Futur Simple (O Futuro da Língua)',
+    level: 'A2',
+    icon: CupertinoIcons.forward,
+    summary: 'A fórmula mais fácil da gramática: infinitivo + terminações do verbo avoir.',
+    sections: const [
+      GrammarSection(
+        title: '1. A fórmula mágica do Futur Simple',
+        content:
+            'Para a maioria dos verbos regulares, basta pegar o INFINITIVO inteiro e colar as terminações:\n'
+            'Terminações (iguais ao verbo avoir no presente):\n'
+            '-ai, -as, -a, -ons, -ez, -ont\n\n'
+            'Exemplo com Parler:\n'
+            'Je parlerai, tu parleras, il parlera, nous parlerons, vous parlerez, ils parleront.',
+      ),
+      GrammarSection(
+        title: '2. Os 4 radicais irregulares que você precisa dominar',
+        content:
+            'Todos os verbos usam as mesmas terminações! Apenas o radical muda em alguns irregulares:\n'
+            '• Être → ser- (je serai, tu seras...)\n'
+            '• Avoir → aur- (j\'aurai, tu auras...)\n'
+            '• Aller → ir- (j\'irai, tu iras...)\n'
+            '• Faire → fer- (je ferai, tu feras...)',
+      ),
+    ],
+    examples: const [
+      GrammarExample(fr: 'Demain, je partirai tôt.', pt: 'Amanhã, partirei cedo.'),
+      GrammarExample(fr: 'Un jour, tu seras bilingue.', pt: 'Um dia, você será bilíngue.'),
+      GrammarExample(fr: 'Nous aurons le temps.', pt: 'Teremos tempo.'),
+      GrammarExample(fr: 'Ils feront un voyage.', pt: 'Eles farão uma viagem.'),
+    ],
+    exercises: [
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Complete com o futuro de Être:',
+        subprompt: "Demain, je ___ à Paris.",
+        options: ['serai', 'suis', 'étais', 'seras'],
+        solution: 'serai',
+        explanation: 'Perfeito! Être no futuro com Je vira "je serai".',
+        hint: 'Futur de Être: je serai, tu seras, il sera, nous serons, vous serez, ils seront.',
+      ),
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Complete com o futuro de Aller:',
+        subprompt: "Nous ___ en France l'année prochaine.",
+        options: ['irons', 'allons', 'iront', 'allions'],
+        solution: 'irons',
+        explanation: 'Excelente! Radical de aller no futuro é ir- (nous irons).',
+      ),
+      ...conjDrill(['être', 'avoir', 'aller', 'faire'], 3),
+    ],
+  ),
+  GrammarTopic(
+    id: 'pronominaux',
+    title: 'Verbos Pronominais (Se...)',
+    level: 'A2',
+    icon: CupertinoIcons.person_2_fill,
+    summary: 'Ações reflexivas, pronomes correspondentes (me, te, se, nous, vous, se) e rotina.',
+    sections: const [
+      GrammarSection(
+        title: '1. O que é um verbo pronominal?',
+        content:
+            'São verbos em que o sujeito faz e recebe a ação (como se levantar, se chamar):\n'
+            '• Je me lève (Eu me levanto)\n'
+            '• Tu te lèves (Você se levanta)\n'
+            '• Il/Elle se lève (Ele/Ela se levanta)\n'
+            '• Nous nous levons (Nós nos levantamos)\n'
+            '• Vous vous levez (Vocês se levantam)\n'
+            '• Ils/Elles se lèvent (Eles/Elas se levantam)\n\n'
+            'Antes de vogal, me/te/se viram m\', t\', s\' ("Je m\'appelle").',
+      ),
+      GrammarSection(
+        title: '2. Negação e Passado dos pronominais',
+        content:
+            '• Na negação, o "ne" abraça o pronome + verbo:\n'
+            '  "Je ne me réveille pas tôt." (Eu não acordo cedo.)\n\n'
+            '• No Passé Composé, TODOS os pronominais usam ÊTRE:\n'
+            '  "Je me suis réveillé." (Eu acordei.)\n'
+            '  "Elle s\'est couchée." (Ela foi deitar — com +e de feminino!).',
+      ),
+    ],
+    examples: const [
+      GrammarExample(fr: 'Je m\'appelle Sophie.', pt: 'Eu me chamo Sophie.'),
+      GrammarExample(fr: 'Tu te reposes bien ?', pt: 'Você está descansando bem?'),
+      GrammarExample(fr: 'Nous nous amusons beaucoup.', pt: 'Nós nos divertimos muito.'),
+      GrammarExample(fr: 'Je ne me perds jamais.', pt: 'Eu nunca me perco.'),
+      GrammarExample(fr: 'Elle s\'est levée à sept heures.', pt: 'Ela levantou às sete horas.'),
+    ],
+    exercises: [
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Qual o pronome reflexivo para "nous"?',
+        subprompt: "Nous ___ préparons pour la fête.",
+        options: ['nous', 'vous', 'se', 'me'],
+        solution: 'nous',
+        explanation: 'Correto! Com "nous", o pronome repete: "Nous nous préparons".',
+      ),
+      const GrammarExercise(
+        type: ExerciseType.sentenceBuilder,
+        prompt: 'Monte a negação com verbo pronominal:',
+        subprompt: 'Eu não me lembro.',
+        tokens: ['Je', 'ne', 'me', 'souviens', 'pas'],
+        solution: ['Je', 'ne', 'me', 'souviens', 'pas'],
+        explanation: 'Perfeito! "Je ne me souviens pas" segue a ordem ne + pronome + verbo + pas.',
+      ),
+      const GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Complete no passado (verbo pronominal usa Être):',
+        subprompt: "Elle s'___ couchée tard.",
+        options: ['est', 'a', 'va', 'fait'],
+        solution: 'est',
+        explanation: 'Excelente! No passé composé, verbos pronominais usam sempre ÊTRE (s\'est couchée).',
+      ),
+    ],
+  ),
 ];
 
-final _tts = FlutterTts()..setLanguage('fr-FR')..setSpeechRate(0.46);
-void _speak(String text) => _tts.speak(text);
+void _speak(String text) => speakFr(text);
 
 /// Main Grammar screen listing the 7 practical grammar modules.
 class GrammarScreen extends StatelessWidget {
@@ -563,6 +1290,73 @@ class GrammarScreen extends StatelessWidget {
                         Text(
                           'Domine a estrutura real do francês sem decoreba e com exercícios interativos.',
                           style: T.secondary,
+                        ),
+                        const SizedBox(height: T.s3),
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              CupertinoPageRoute(
+                                builder: (_) =>
+                                    LessonScreen(topic: conjDrillTopic()),
+                              ),
+                            );
+                          },
+                          child: GlassCard(
+                            color: T.butter.withValues(alpha: 0.55),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    color: T.butter,
+                                    borderRadius: BorderRadius.circular(T.rMd),
+                                  ),
+                                  child: const Icon(
+                                    CupertinoIcons.arrow_2_circlepath,
+                                    color: T.text,
+                                    size: 22,
+                                  ),
+                                ),
+                                const SizedBox(width: T.s3),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const LevelChip('Drill'),
+                                          const SizedBox(width: T.s2),
+                                          Expanded(
+                                            child: Text(
+                                              'Treino Rápido de Conjugação',
+                                              style: T.body.copyWith(
+                                                  fontWeight: FontWeight.w700),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: T.s1),
+                                      Text(
+                                        '10 questões aleatórias dos verbos pilares (être, avoir, aller, faire...).',
+                                        style: T.caption,
+                                        maxLines: 2,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: T.s2),
+                                const Icon(
+                                  CupertinoIcons.chevron_right,
+                                  color: T.text,
+                                  size: 16,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                         const SizedBox(height: T.s4),
                       ],
@@ -711,7 +1505,9 @@ class _LessonScreenState extends State<LessonScreen> {
       if (correct) {
         _feedbackMessage = ex.explanation;
       } else {
-        _feedbackMessage = 'Ainda não está certo. Tente novamente!';
+        _feedbackMessage = ex.hint != null
+            ? 'Ainda não está certo.\n\n${ex.hint}'
+            : 'Ainda não está certo. Tente novamente!';
       }
     });
   }
@@ -726,7 +1522,11 @@ class _LessonScreenState extends State<LessonScreen> {
       setState(() {
         _quizFinished = true;
       });
-      store.markGrammarDone(widget.topic.id);
+      if (widget.topic.id.startsWith('drill')) {
+        store.addReview(1);
+      } else {
+        store.markGrammarDone(widget.topic.id);
+      }
     }
   }
 
@@ -839,52 +1639,57 @@ class _LessonScreenState extends State<LessonScreen> {
                   ],
 
                   // Audio Examples Section
-                  Text('Exemplos com Áudio',
-                      style: T.title.copyWith(fontSize: 18)),
-                  const SizedBox(height: T.s2),
-                  GlassCard(
-                    padding: const EdgeInsets.all(T.s2),
-                    child: Column(
-                      children: [
-                        for (int i = 0; i < t.examples.length; i++) ...[
-                          if (i > 0)
-                            const Divider(
-                                height: 1, color: T.hairline, indent: 8, endIndent: 8),
-                          ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: T.s3, vertical: 2),
-                            title: Text(t.examples[i].fr,
-                                style: T.body.copyWith(
-                                    fontWeight: FontWeight.w600)),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(t.examples[i].pt, style: T.secondary),
-                                if (t.examples[i].note != null)
-                                  Text(t.examples[i].note!,
-                                      style: T.caption
-                                          .copyWith(color: T.textMuted)),
-                              ],
-                            ),
-                            trailing: GestureDetector(
-                              onTap: () => _speak(t.examples[i].fr),
-                              child: Container(
-                                width: 36,
-                                height: 36,
-                                decoration: BoxDecoration(
-                                  color: T.sky.withValues(alpha: 0.5),
-                                  shape: BoxShape.circle,
+                  if (t.examples.isNotEmpty) ...[
+                    Text('Exemplos com Áudio',
+                        style: T.title.copyWith(fontSize: 18)),
+                    const SizedBox(height: T.s2),
+                    GlassCard(
+                      padding: const EdgeInsets.all(T.s2),
+                      child: Column(
+                        children: [
+                          for (int i = 0; i < t.examples.length; i++) ...[
+                            if (i > 0)
+                              const Divider(
+                                  height: 1,
+                                  color: T.hairline,
+                                  indent: 8,
+                                  endIndent: 8),
+                            ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: T.s3, vertical: 2),
+                              title: Text(t.examples[i].fr,
+                                  style: T.body.copyWith(
+                                      fontWeight: FontWeight.w600)),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(t.examples[i].pt, style: T.secondary),
+                                  if (t.examples[i].note != null)
+                                    Text(t.examples[i].note!,
+                                        style: T.caption
+                                            .copyWith(color: T.textMuted)),
+                                ],
+                              ),
+                              trailing: GestureDetector(
+                                onTap: () => _speak(t.examples[i].fr),
+                                child: Container(
+                                  width: 36,
+                                  height: 36,
+                                  decoration: BoxDecoration(
+                                    color: T.sky.withValues(alpha: 0.5),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(CupertinoIcons.speaker_2,
+                                      size: 18, color: T.text),
                                 ),
-                                child: const Icon(CupertinoIcons.speaker_2,
-                                    size: 18, color: T.text),
                               ),
                             ),
-                          ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: T.s5),
+                    const SizedBox(height: T.s5),
+                  ],
 
                   // Interactive Exercises Header
                   Row(
@@ -893,7 +1698,10 @@ class _LessonScreenState extends State<LessonScreen> {
                           color: T.text, size: 20),
                       const SizedBox(width: T.s2),
                       Expanded(
-                        child: Text('Exercícios da Aula',
+                        child: Text(
+                            widget.topic.id.startsWith('drill')
+                                ? 'Questões de Conjugação'
+                                : 'Exercícios da Aula',
                             style: T.title.copyWith(fontSize: 18)),
                       ),
                       if (!_quizFinished)
@@ -920,6 +1728,7 @@ class _LessonScreenState extends State<LessonScreen> {
   }
 
   Widget _buildCelebrationCard(BuildContext context) {
+    final isDrill = widget.topic.id.startsWith('drill');
     return GlassCard(
       color: T.mint.withValues(alpha: 0.5),
       child: Column(
@@ -936,17 +1745,19 @@ class _LessonScreenState extends State<LessonScreen> {
                 size: 32, color: T.text),
           ),
           const SizedBox(height: T.s3),
-          Text('Bravo ! Aula Concluída',
+          Text(isDrill ? 'Bravo ! Treino Concluído' : 'Bravo ! Aula Concluída',
               style: T.title.copyWith(fontSize: 20)),
           const SizedBox(height: T.s1),
           Text(
-            'Você dominou os conceitos e exercícios deste tópico com sucesso!',
+            isDrill
+                ? 'Você concluiu 10 questões de conjugação (+1 na meta diária de revisão)!'
+                : 'Você dominou os conceitos e exercícios deste tópico com sucesso!',
             style: T.secondary,
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: T.s4),
           PillButton(
-            'Voltar aos Tópicos',
+            isDrill ? 'Concluir Treino' : 'Voltar aos Tópicos',
             icon: CupertinoIcons.arrow_left,
             color: T.lavender,
             onTap: () => Navigator.pop(context),

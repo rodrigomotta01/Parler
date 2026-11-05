@@ -105,8 +105,14 @@ Future<void> main(List<String> args) async {
         if (matchPos) w['defPos'] = true;
       }
       final ex = (s['examples'] as List?) ?? const [];
-      if ((w['ex'] ?? '').isEmpty && ex.isNotEmpty && ex.first['text'] != null) {
-        w['ex'] = ex.first['text'];
+      for (final it in ex) {
+        final t = it['text'] as String?;
+        if (t != null && t.trim().isNotEmpty) {
+          final cur = w['ex'] as String? ?? '';
+          if (cur.isEmpty || (t.split(' ').length < cur.split(' ').length && t.split(' ').length >= 3)) {
+            w['ex'] = t.trim();
+          }
+        }
       }
     }
     for (final f in (e['forms'] as List?) ?? const []) {

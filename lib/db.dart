@@ -92,12 +92,18 @@ class Store extends ChangeNotifier {
   List<String> get feeds =>
       (settings['feeds'] ?? '').split('\n').where((s) => s.isNotEmpty).toList();
 
+  String get bothSince => settings['goalBothSince'] ?? '';
+  bool met(String k, Day? d) => metGoal(d,
+      goalRev: goalRev,
+      goalSec: goalSec,
+      both: bothSince.isNotEmpty && k.compareTo(bothSince) >= 0);
+
   Day? get today => days[dayKey(DateTime.now())];
-  bool get todayMet => metGoal(today, goalRev: goalRev, goalSec: goalSec);
+  bool get todayMet => met(dayKey(DateTime.now()), today);
   double get todayProgress =>
-      goalProgress(today, goalRev: goalRev, goalSec: goalSec);
+      goalProgress(today, goalRev: goalRev, goalSec: goalSec, both: true);
   int get streakDays => streak(days, DateTime.now(),
-      goalRev: goalRev, goalSec: goalSec, freeze: freeze);
+      goalRev: goalRev, goalSec: goalSec, freeze: freeze, bothSince: bothSince);
 
   static Future<Store> open() async {
     final raw = await rootBundle.loadString('assets/vocab.json');
@@ -160,6 +166,10 @@ class Store extends ChangeNotifier {
     }
     for (final r in await db.query('translations')) {
       s._trCache[r['fr'] as String] = r['pt'] as String;
+    }
+    if (!s.settings.containsKey('goalBothSince')) {
+      final todayK = dayKey(DateTime.now());
+      await s.set('goalBothSince', todayK);
     }
     await s._loadEbooks();
     await s._loadDays();

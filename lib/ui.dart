@@ -70,6 +70,52 @@ abstract final class T {
       );
 }
 
+typedef ReaderPalette = ({
+  Color bg,
+  Color card,
+  Color text,
+  Color muted,
+  Color accent,
+  Color divider,
+  Brightness brightness,
+});
+
+abstract final class ReaderTheme {
+  static const light = (
+    bg: T.bg,
+    card: T.surface,
+    text: T.text,
+    muted: T.textMuted,
+    accent: T.lavender,
+    divider: T.hairline,
+    brightness: Brightness.light,
+  );
+  static const sepia = (
+    bg: Color(0xFFF4ECD8),
+    card: Color(0xFFEFE4CB),
+    text: Color(0xFF5B4636),
+    muted: Color(0xFF9C8B78),
+    accent: Color(0xFFDEC39F),
+    divider: Color(0x1A5B4636),
+    brightness: Brightness.light,
+  );
+  static const night = (
+    bg: Color(0xFF1B1916),
+    card: Color(0xFF26231F),
+    text: Color(0xFFCDBB9C),
+    muted: Color(0xFF7D705F),
+    accent: Color(0xFF4A4060),
+    divider: Color(0x26CDBB9C),
+    brightness: Brightness.dark,
+  );
+
+  static ReaderPalette of(String? name) => switch (name) {
+        'sepia' => sepia,
+        'night' => night,
+        _ => light,
+      };
+}
+
 /// Translucent rounded card — the default container.
 class GlassCard extends StatelessWidget {
   const GlassCard({super.key, required this.child, this.color, this.padding});

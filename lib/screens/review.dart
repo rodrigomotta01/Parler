@@ -18,6 +18,41 @@ Future<void> speakFr(String text, {bool slow = false}) async {
   await tts.speak(text);
 }
 
+Future<List<Map<String, String>>> getOfflineFrenchVoices() async {
+  try {
+    final raw = await tts.getVoices;
+    if (raw is! List) return [];
+    final out = <Map<String, String>>[];
+    for (final v in raw) {
+      if (v is! Map) continue;
+      final name = v['name']?.toString() ?? '';
+      final locale = v['locale']?.toString() ?? '';
+      final isNetwork = v['network_required'] == true ||
+          name.toLowerCase().contains('network') ||
+          v['isNetworkConnectionRequired'] == true;
+      if (locale.toLowerCase().startsWith('fr') && !isNetwork) {
+        out.add({'name': name, 'locale': locale});
+      }
+    }
+    return out;
+  } catch (_) {
+    return [];
+  }
+}
+
+Future<void> applyTtsVoice(String? voiceName) async {
+  try {
+    if (voiceName != null && voiceName.isNotEmpty) {
+      await tts.setVoice({'name': voiceName, 'locale': 'fr-FR'});
+    } else {
+      final voices = await getOfflineFrenchVoices();
+      if (voices.isNotEmpty) {
+        await tts.setVoice(voices.first);
+      }
+    }
+  } catch (_) {}
+}
+
 class ReviewScreen extends StatefulWidget {
   const ReviewScreen({super.key});
 
@@ -78,7 +113,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
           Row(children: [
             for (final (i, label) in [
               (0, 'Cartas'),
-              (1, 'Ditado'),
+              (1, 'Significado'),
               (2, 'Áudio'),
               (3, 'Frases'),
             ])
@@ -97,7 +132,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
                       ),
                       child: Text(label,
                           style: T.body.copyWith(
-                              fontSize: 14, fontWeight: FontWeight.w600),
+                              fontSize: 13, fontWeight: FontWeight.w600),
                           textAlign: TextAlign.center),
                     ),
                   ),
@@ -108,7 +143,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
           Expanded(
             child: switch (_mode) {
               0 => _cardsView(),
-              1 => const _DictationChallenge(),
+              1 => const _MeaningQuiz(),
               2 => const _ListeningQuiz(),
               _ => const _ClozeChallenge(),
             },
@@ -392,19 +427,19 @@ class WordDetails extends StatelessWidget {
       ]);
 }
 
-/// Audio Challenge 1: Dictation (Dictée).
-class _DictationChallenge extends StatefulWidget {
-  const _DictationChallenge();
+/// Challenge 1: Meaning Quiz (Múltipla escolha de significado em português com explicação em caso de erro).
+class _MeaningQuiz extends StatefulWidget {
+  const _MeaningQuiz();
 
   @override
-  State<_DictationChallenge> createState() => _DictationChallengeState();
+  State<_MeaningQuiz> createState() => _MeaningQuizState();
 }
 
-class _DictationChallengeState extends State<_DictationChallenge> {
-  final _ctrl = TextEditingController();
+class _MeaningQuizState extends State<_MeaningQuiz> {
   final _rng = Random();
-  late Word _w;
-  bool? _ok;
+  late Word _target;
+  late List<Word> _options;
+  int? _picked;
 
   @override
   void initState() {
@@ -412,105 +447,139 @@ class _DictationChallengeState extends State<_DictationChallenge> {
     _next();
   }
 
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
   void _next() {
     final pool = store.vocab.words
         .where((w) => w.level == store.level && w.pt.isNotEmpty)
         .toList();
-    _w = pool[_rng.nextInt(pool.length)];
-    _ctrl.clear();
-    _ok = null;
-    setState(() {});
-    speakFr(_w.lemma);
-  }
+    if (pool.isEmpty) return;
+    _target = pool[_rng.nextInt(pool.length)];
 
-  void _check() {
-    if (_ok != null) {
-      _next();
-      return;
+    final samePosPool = pool.where((w) => w.pos == _target.pos && w.id != _target.id).toList();
+    final candidatePool = samePosPool.length >= 3 ? samePosPool : pool.where((w) => w.id != _target.id).toList();
+
+    final opts = <Word>{_target};
+    while (opts.length < 4 && candidatePool.isNotEmpty) {
+      opts.add(candidatePool[_rng.nextInt(candidatePool.length)]);
     }
-    final ok = _ctrl.text.trim().toLowerCase() == _w.lemma.toLowerCase();
-    store.addReview(1);
-    setState(() => _ok = ok);
+    _options = opts.toList()..shuffle(_rng);
+    _picked = null;
+    setState(() {});
+    speakFr(_target.lemma);
   }
 
   @override
-  Widget build(BuildContext context) => GlassCard(
-        padding: const EdgeInsets.all(T.s5),
-        child: SingleChildScrollView(
-          child: Column(children: [
-            Row(children: [
-              LevelChip(_w.level),
-              const SizedBox(width: T.s2),
-              Text('Ditado em francês', style: T.caption),
-              const Spacer(),
-              IconButton(
-                tooltip: 'Ouvir devagar',
-                icon: const Icon(CupertinoIcons.tortoise, color: T.text),
-                onPressed: () => speakFr(_w.lemma, slow: true),
-              ),
-              IconButton(
-                tooltip: 'Ouvir normal',
-                icon: const Icon(CupertinoIcons.speaker_2, color: T.text),
-                onPressed: () => speakFr(_w.lemma),
-              ),
-            ]),
-            const SizedBox(height: T.s4),
-            Text('Ouça a palavra e digite em francês:', style: T.secondary),
-            const SizedBox(height: T.s3),
-            TextField(
-              controller: _ctrl,
-              autocorrect: false,
-              textAlign: TextAlign.center,
-              style: T.title,
-              onSubmitted: (_) => _check(),
-              decoration: InputDecoration(
-                hintText: 'Digite aqui…',
-                filled: true,
-                fillColor: T.bg,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(T.rMd),
-                  borderSide: const BorderSide(color: T.hairline),
-                ),
-              ),
+  Widget build(BuildContext context) {
+    return GlassCard(
+      padding: const EdgeInsets.all(T.s5),
+      child: SingleChildScrollView(
+        child: Column(children: [
+          Row(children: [
+            LevelChip(_target.level),
+            const SizedBox(width: T.s2),
+            Text('Qual o significado?', style: T.caption),
+            const Spacer(),
+            IconButton(
+              tooltip: 'Ouvir devagar',
+              icon: const Icon(CupertinoIcons.tortoise, color: T.text),
+              onPressed: () => speakFr(_target.lemma, slow: true),
             ),
-            const SizedBox(height: T.s4),
-            if (_ok != null) ...[
-              Container(
-                padding: const EdgeInsets.all(T.s3),
-                decoration: BoxDecoration(
-                  color: _ok! ? T.mint : T.rose,
-                  borderRadius: BorderRadius.circular(T.rMd),
-                ),
-                child: Column(children: [
-                  Text(_ok! ? 'Correto! 🎉' : 'Resposta: ${_w.lemma}',
-                      style: T.title),
-                  if (_w.ipa.isNotEmpty) Text(_w.ipa, style: T.secondary),
-                  const SizedBox(height: T.s2),
-                  WordDetails(_w),
-                ]),
-              ),
-              const SizedBox(height: T.s4),
-            ],
-            SizedBox(
-              width: double.infinity,
-              child: PillButton(
-                _ok == null ? 'Verificar' : 'Próxima palavra',
-                color: _ok == null ? T.lavender : T.mint,
-                onTap: _check,
-              ),
+            IconButton(
+              tooltip: 'Ouvir normal',
+              icon: const Icon(CupertinoIcons.speaker_2, color: T.text),
+              onPressed: () => speakFr(_target.lemma),
             ),
           ]),
-        ),
-      );
+          const SizedBox(height: T.s3),
+          Text(_target.lemma,
+              style: T.largeTitle.copyWith(fontSize: 36),
+              textAlign: TextAlign.center),
+          if (_target.ipa.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(_target.ipa, style: T.secondary),
+            ),
+          const SizedBox(height: T.s4),
+          Text('Escolha o significado correto em português:',
+              style: T.secondary, textAlign: TextAlign.center),
+          const SizedBox(height: T.s3),
+          for (final (i, opt) in _options.indexed)
+            Padding(
+              padding: const EdgeInsets.only(bottom: T.s2),
+              child: SizedBox(
+                width: double.infinity,
+                child: PillButton(
+                  opt.gloss,
+                  color: _picked == null
+                      ? T.lavender.withValues(alpha: 0.35)
+                      : (opt == _target
+                          ? T.mint
+                          : (_picked == i ? T.rose : T.surface)),
+                  onTap: _picked != null
+                      ? null
+                      : () {
+                          store.addReview(1);
+                          setState(() => _picked = i);
+                        },
+                ),
+              ),
+            ),
+          if (_picked != null) ...[
+            const SizedBox(height: T.s3),
+            if (_options[_picked!] != _target) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(T.s3),
+                decoration: BoxDecoration(
+                  color: T.rose.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(T.rMd),
+                  border: Border.all(color: T.rose, width: 1),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      const Icon(CupertinoIcons.exclamationmark_circle_fill,
+                          size: 18, color: T.text),
+                      const SizedBox(width: T.s2),
+                      Expanded(
+                        child: Text(
+                          'Atenção ao significado:',
+                          style: T.body.copyWith(
+                              fontWeight: FontWeight.w700, fontSize: 15),
+                        ),
+                      ),
+                    ]),
+                    const SizedBox(height: T.s2),
+                    Text(
+                      'Você escolheu «${_options[_picked!].gloss}», que significa «${_options[_picked!].lemma}».',
+                      style: T.body.copyWith(fontSize: 14),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'A resposta correta para «${_target.lemma}» é «${_target.gloss}».',
+                      style: T.body.copyWith(
+                          fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: T.s3),
+            ],
+            WordDetails(_target),
+            const SizedBox(height: T.s4),
+            SizedBox(
+              width: double.infinity,
+              child: PillButton('Próxima palavra',
+                  color: T.mint, onTap: _next),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
 }
 
-/// Audio Challenge 2: Oral Comprehension Quiz.
+/// Audio Challenge 2: Oral Comprehension Quiz (somente a palavra falada, alternativas apenas com palavras sem entregar a tradução).
 class _ListeningQuiz extends StatefulWidget {
   const _ListeningQuiz();
 
@@ -534,20 +603,28 @@ class _ListeningQuizState extends State<_ListeningQuiz> {
     final pool = store.vocab.words
         .where((w) => w.level == store.level && w.pt.isNotEmpty)
         .toList();
+    if (pool.isEmpty) return;
     _target = pool[_rng.nextInt(pool.length)];
+
+    final candidates = pool
+        .where((w) =>
+            w.id != _target.id &&
+            (w.lemma.length - _target.lemma.length).abs() <= 2)
+        .toList();
+    final activePool = candidates.length >= 3 ? candidates : pool;
+
     final opts = <Word>{_target};
     while (opts.length < 4) {
-      opts.add(pool[_rng.nextInt(pool.length)]);
+      opts.add(activePool[_rng.nextInt(activePool.length)]);
     }
     _options = opts.toList()..shuffle(_rng);
     _picked = null;
     setState(() {});
-    speakFr(_target.ex.isNotEmpty ? _target.ex : _target.lemma);
+    speakFr(_target.lemma);
   }
 
   @override
   Widget build(BuildContext context) {
-    final phrase = _target.ex.isNotEmpty ? _target.ex : _target.lemma;
     return GlassCard(
       padding: const EdgeInsets.all(T.s5),
       child: SingleChildScrollView(
@@ -555,29 +632,33 @@ class _ListeningQuizState extends State<_ListeningQuiz> {
           Row(children: [
             LevelChip(_target.level),
             const SizedBox(width: T.s2),
-            Text('Compreensão oral', style: T.caption),
+            Text('Treino de audição', style: T.caption),
             const Spacer(),
             IconButton(
               tooltip: 'Ouvir devagar',
               icon: const Icon(CupertinoIcons.tortoise, color: T.text),
-              onPressed: () => speakFr(phrase, slow: true),
+              onPressed: () => speakFr(_target.lemma, slow: true),
             ),
             IconButton(
-              tooltip: 'Ouvir novamente',
+              tooltip: 'Ouvir normal',
               icon: const Icon(CupertinoIcons.speaker_2, color: T.text),
-              onPressed: () => speakFr(phrase),
+              onPressed: () => speakFr(_target.lemma),
             ),
           ]),
           const SizedBox(height: T.s3),
-          Text('Qual palavra/significado você ouviu?', style: T.secondary),
-          const SizedBox(height: T.s3),
+          Text('Qual palavra você ouviu?',
+              style: T.body.copyWith(fontWeight: FontWeight.w600, fontSize: 16)),
+          const SizedBox(height: T.s1),
+          Text('Ouça a pronúncia com atenção e identifique a palavra correta.',
+              style: T.secondary, textAlign: TextAlign.center),
+          const SizedBox(height: T.s4),
           for (final (i, opt) in _options.indexed)
             Padding(
               padding: const EdgeInsets.only(bottom: T.s2),
               child: SizedBox(
                 width: double.infinity,
                 child: PillButton(
-                  '${opt.lemma} — ${opt.gloss}',
+                  opt.lemma,
                   color: _picked == null
                       ? T.sky.withValues(alpha: 0.5)
                       : (opt == _target
@@ -593,6 +674,29 @@ class _ListeningQuizState extends State<_ListeningQuiz> {
               ),
             ),
           if (_picked != null) ...[
+            const SizedBox(height: T.s3),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(T.s3),
+              decoration: BoxDecoration(
+                color: _options[_picked!] == _target
+                    ? T.mint.withValues(alpha: 0.35)
+                    : T.rose.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(T.rMd),
+              ),
+              child: Column(children: [
+                Text(
+                  _options[_picked!] == _target
+                      ? 'Correto! 🎉'
+                      : 'Resposta certa: ${_target.lemma}',
+                  style: T.body.copyWith(
+                      fontWeight: FontWeight.w700, fontSize: 16),
+                ),
+                const SizedBox(height: 2),
+                Text('« ${_target.lemma} » significa « ${_target.gloss} »',
+                    style: T.secondary.copyWith(color: T.text)),
+              ]),
+            ),
             const SizedBox(height: T.s3),
             WordDetails(_target),
             const SizedBox(height: T.s4),
@@ -634,11 +738,16 @@ class _ClozeChallengeState extends State<_ClozeChallenge> {
         .where((w) =>
             w.level == store.level &&
             w.ex.isNotEmpty &&
+            w.ex.split(' ').length <= 15 &&
             w.ex.toLowerCase().contains(w.lemma.toLowerCase()))
         .toList();
     final activePool = pool.isNotEmpty
         ? pool
-        : store.vocab.words.where((w) => w.ex.isNotEmpty).toList();
+        : store.vocab.words
+            .where((w) =>
+                w.ex.isNotEmpty &&
+                w.ex.toLowerCase().contains(w.lemma.toLowerCase()))
+            .toList();
     _target = activePool[_rng.nextInt(activePool.length)];
     final re = RegExp(RegExp.escape(_target.lemma), caseSensitive: false);
     _masked = _target.ex.replaceFirst(re, '______');

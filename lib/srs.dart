@@ -18,30 +18,42 @@ String dayKey(DateTime t) {
 typedef Day = ({int reviews, int listenSec});
 
 bool metGoal(Day? d,
-        {int goalRev = goalReviews, int goalSec = goalListenSec}) =>
-    d != null && (d.reviews >= goalRev || d.listenSec >= goalSec);
+        {int goalRev = goalReviews,
+        int goalSec = goalListenSec,
+        bool both = false}) =>
+    d != null &&
+    (both
+        ? d.reviews >= goalRev && d.listenSec >= goalSec
+        : d.reviews >= goalRev || d.listenSec >= goalSec);
 
 double goalProgress(Day? d,
-        {int goalRev = goalReviews, int goalSec = goalListenSec}) =>
-    d == null
-        ? 0
-        : [
-            d.reviews / (goalRev < 1 ? 1 : goalRev),
-            d.listenSec / (goalSec < 1 ? 1 : goalSec),
-          ].reduce((a, b) => a > b ? a : b).clamp(0, 1).toDouble();
+    {int goalRev = goalReviews,
+    int goalSec = goalListenSec,
+    bool both = false}) {
+  if (d == null) return 0;
+  final rProg = (d.reviews / (goalRev < 1 ? 1 : goalRev)).clamp(0.0, 1.0);
+  final lProg = (d.listenSec / (goalSec < 1 ? 1 : goalSec)).clamp(0.0, 1.0);
+  return both ? (rProg + lProg) / 2 : (rProg > lProg ? rProg : lProg);
+}
 
 /// Consecutive days meeting the goal, ending today. Today not met yet does
 /// not break the streak (you still have until midnight). When [freeze] is true,
 /// up to 1 missed day per 7-day window is forgiven if the previous day met the goal.
+/// When [bothSince] is given, days on or after this date key require both reviews AND reading.
 int streak(
   Map<String, Day> days,
   DateTime now, {
   int goalRev = goalReviews,
   int goalSec = goalListenSec,
   bool freeze = false,
+  String? bothSince,
 }) {
-  bool met(DateTime dt) =>
-      metGoal(days[dayKey(dt)], goalRev: goalRev, goalSec: goalSec);
+  bool met(DateTime dt) {
+    final k = dayKey(dt);
+    final useBoth = bothSince != null && k.compareTo(bothSince) >= 0;
+    return metGoal(days[k], goalRev: goalRev, goalSec: goalSec, both: useBoth);
+  }
+
   final l = now.toLocal();
   var d = DateTime(l.year, l.month, l.day);
   if (!met(d)) d = DateTime(d.year, d.month, d.day - 1);

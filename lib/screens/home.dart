@@ -24,6 +24,25 @@ class _HomeScreenState extends State<HomeScreen> {
           final s = store.streakDays;
           final gRev = store.goalRev;
           final gMin = store.goalListenMin;
+          final revDone = today?.reviews ?? 0;
+          final readSec = today?.listenSec ?? 0;
+          final revMet = revDone >= gRev;
+          final readMet = readSec >= store.goalSec;
+
+          String statusText() {
+            if (store.todayMet) return 'Meta de hoje cumprida. Bravo ! 🔥';
+            if (!revMet && !readMet) {
+              final leftRev = gRev - revDone;
+              final leftMin = ((store.goalSec - readSec) / 60).ceil();
+              return 'Faltam: $leftRev revisões e $leftMin min de leitura.';
+            } else if (!revMet) {
+              return 'Falta: ${gRev - revDone} revisões para bater a meta.';
+            } else {
+              final leftMin = ((store.goalSec - readSec) / 60).ceil();
+              return 'Falta: $leftMin min de leitura para bater a meta.';
+            }
+          }
+
           return ListView(
             padding: const EdgeInsets.fromLTRB(T.s4, T.s4, T.s4, 120),
             children: [
@@ -39,17 +58,55 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: T.s4),
               GlassCard(
                 padding: const EdgeInsets.all(T.s5),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                child: Column(
                   children: [
-                    _ring('Ofensiva', store.todayMet ? 1 : 0, T.peach, '🔥',
-                        '$s ${s == 1 ? 'dia' : 'dias'}'),
-                    _ring(
-                        'Meta diária',
-                        store.todayProgress,
-                        T.lavender,
-                        '${today?.reviews ?? 0}/$gRev',
-                        '${(today?.listenSec ?? 0) ~/ 60}/$gMin min'),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _ring('Ofensiva', store.todayMet ? 1 : 0, T.peach,
+                            store.todayMet ? '🔥' : '⏳',
+                            '$s ${s == 1 ? 'dia' : 'dias'}'),
+                        _ring(
+                            'Meta diária',
+                            store.todayProgress,
+                            T.lavender,
+                            '${(store.todayProgress * 100).toInt()}%',
+                            '$revDone/$gRev rev · ${readSec ~/ 60}/$gMin min'),
+                      ],
+                    ),
+                    const SizedBox(height: T.s3),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                            revMet
+                                ? CupertinoIcons.checkmark_circle_fill
+                                : CupertinoIcons.circle,
+                            size: 16,
+                            color: revMet ? T.mint : T.textMuted),
+                        const SizedBox(width: 4),
+                        Text('Revisão ($revDone/$gRev)',
+                            style: T.caption.copyWith(
+                                color: T.text,
+                                fontWeight: revMet
+                                    ? FontWeight.w700
+                                    : FontWeight.w500)),
+                        const SizedBox(width: T.s4),
+                        Icon(
+                            readMet
+                                ? CupertinoIcons.checkmark_circle_fill
+                                : CupertinoIcons.circle,
+                            size: 16,
+                            color: readMet ? T.mint : T.textMuted),
+                        const SizedBox(width: 4),
+                        Text('Leitura (${readSec ~/ 60}/$gMin min)',
+                            style: T.caption.copyWith(
+                                color: T.text,
+                                fontWeight: readMet
+                                    ? FontWeight.w700
+                                    : FontWeight.w500)),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -57,9 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
               GestureDetector(
                 onTap: () => _settings(context),
                 child: Text(
-                  store.todayMet
-                      ? 'Meta de hoje cumprida. Bravo !'
-                      : 'Meta: $gRev revisões ou $gMin min de áudio (toque para alterar).',
+                  statusText(),
                   style: T.secondary,
                   textAlign: TextAlign.center,
                 ),
@@ -138,8 +193,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final inRevs = inspectedData?.reviews ?? 0;
     final inSecs = inspectedData?.listenSec ?? 0;
     final inActive = inRevs > 0 || inSecs > 0;
-    final inMet =
-        metGoal(inspectedData, goalRev: store.goalRev, goalSec: store.goalSec);
+    final inMet = store.met(inspectedKey, inspectedData);
     final isInspectingToday = inspectedKey == todayKey;
 
     String fmtListen(int s) =>
@@ -165,9 +219,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ? '${monthName(todayUtc.month)} ${todayUtc.year}'
         : '${monthName(start.month)} – ${monthName(todayUtc.month)} ${todayUtc.year}';
 
-    final metCount = days.entries.where((e) {
-      return metGoal(e.value, goalRev: store.goalRev, goalSec: store.goalSec);
-    }).length;
+    final metCount = days.entries.where((e) => store.met(e.key, e.value)).length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -221,8 +273,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       final revs = a?.reviews ?? 0;
                       final secs = a?.listenSec ?? 0;
                       final hasActivity = revs > 0 || secs > 0;
-                      final isMet = metGoal(a,
-                          goalRev: store.goalRev, goalSec: store.goalSec);
+                      final isMet = store.met(k, a);
                       final isDouble = revs >= store.goalRev * 2 ||
                           secs >= store.goalSec * 2;
 
@@ -382,7 +433,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: T.s4),
                 _stepper('Meta diária (revisões)', store.goalRev, 5, 100, 5,
                     (v) => store.set('goalRev', '$v')),
-                _stepper('Meta diária (min de áudio)', store.goalListenMin, 5,
+                _stepper('Meta diária (min de leitura)', store.goalListenMin, 5,
                     60, 5, (v) => store.set('goalListenMin', '$v')),
                 _stepper('Palavras novas por dia', store.newPerDay, 0, 50, 5,
                     (v) => store.set('newPerDay', '$v')),
