@@ -18,23 +18,54 @@ Future<void> speakFr(String text, {bool slow = false}) async {
   await tts.speak(text);
 }
 
+/// Pure filter and quality sorter for offline French TTS voices (Android & iOS).
+List<Map<String, String>> pickFrenchVoices(List raw) {
+  final out = <Map<String, String>>[];
+  for (final v in raw) {
+    if (v is! Map) continue;
+    final name = v['name']?.toString() ?? '';
+    final locale = v['locale']?.toString() ?? '';
+    final netVal = v['network_required'];
+    final isNetwork = netVal == '1' ||
+        netVal == 1 ||
+        netVal == true ||
+        name.toLowerCase().contains('network') ||
+        v['isNetworkConnectionRequired'] == true;
+    final quality = v['quality']?.toString().toLowerCase() ?? 'normal';
+
+    if (locale.toLowerCase().startsWith('fr') && !isNetwork && name.isNotEmpty) {
+      out.add({
+        'name': name,
+        'locale': locale,
+        'quality': quality,
+      });
+    }
+  }
+
+  // Prioritize higher-fidelity models (very_high > high > normal), then fr-FR
+  int score(Map<String, String> item) {
+    var s = 0;
+    final q = item['quality'] ?? '';
+    if (q.contains('very') || q.contains('400')) {
+      s += 30;
+    } else if (q.contains('high') || q.contains('300')) {
+      s += 20;
+    } else if (q.contains('norm') || q.contains('200')) {
+      s += 10;
+    }
+    if (item['locale']?.toLowerCase() == 'fr-fr') s += 5;
+    return s;
+  }
+
+  out.sort((a, b) => score(b).compareTo(score(a)));
+  return out;
+}
+
 Future<List<Map<String, String>>> getOfflineFrenchVoices() async {
   try {
     final raw = await tts.getVoices;
     if (raw is! List) return [];
-    final out = <Map<String, String>>[];
-    for (final v in raw) {
-      if (v is! Map) continue;
-      final name = v['name']?.toString() ?? '';
-      final locale = v['locale']?.toString() ?? '';
-      final isNetwork = v['network_required'] == true ||
-          name.toLowerCase().contains('network') ||
-          v['isNetworkConnectionRequired'] == true;
-      if (locale.toLowerCase().startsWith('fr') && !isNetwork) {
-        out.add({'name': name, 'locale': locale});
-      }
-    }
-    return out;
+    return pickFrenchVoices(raw);
   } catch (_) {
     return [];
   }
@@ -42,15 +73,112 @@ Future<List<Map<String, String>>> getOfflineFrenchVoices() async {
 
 Future<void> applyTtsVoice(String? voiceName) async {
   try {
-    if (voiceName != null && voiceName.isNotEmpty) {
-      await tts.setVoice({'name': voiceName, 'locale': 'fr-FR'});
-    } else {
-      final voices = await getOfflineFrenchVoices();
-      if (voices.isNotEmpty) {
-        await tts.setVoice(voices.first);
-      }
-    }
+    final voices = await getOfflineFrenchVoices();
+    if (voices.isEmpty) return;
+    final match = voices.firstWhere(
+      (v) => v['name'] == voiceName,
+      orElse: () => voices.first,
+    );
+    await tts.setVoice({
+      'name': match['name']!,
+      'locale': match['locale']!,
+    });
   } catch (_) {}
+}
+
+/// Global Voice Picker component for Settings and Reader appearance sheet.
+class VoicePicker extends StatefulWidget {
+  const VoicePicker({super.key, this.isDark = false});
+  final bool isDark;
+
+  @override
+  State<VoicePicker> createState() => _VoicePickerState();
+}
+
+class _VoicePickerState extends State<VoicePicker> {
+  late Future<List<Map<String, String>>> _voicesFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _voicesFuture = getOfflineFrenchVoices();
+  }
+
+  String _cleanVoiceLabel(Map<String, String> v, int index) {
+    final locale = v['locale'] ?? 'fr';
+    final region = locale.split('-').last.toUpperCase();
+    final q = v['quality'] ?? '';
+    final isHigh = q.contains('high') || q.contains('300') || q.contains('400');
+    final tag = isHigh ? '★ Alta' : 'Padrão';
+    return 'Voz ${index + 1} ($region · $tag)';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = widget.isDark ? const Color(0xFFCDBB9C) : T.text;
+    final mutedColor = widget.isDark ? const Color(0xFF7D705F) : T.textMuted;
+    final cardBg = widget.isDark ? const Color(0xFF26231F) : T.surface;
+    final selBg = widget.isDark ? const Color(0xFF4A4060) : T.lavender;
+
+    return FutureBuilder<List<Map<String, String>>>(
+      future: _voicesFuture,
+      builder: (context, snap) {
+        final voices = snap.data ?? [];
+        if (voices.isEmpty) {
+          if (snap.connectionState == ConnectionState.waiting) {
+            return Text('Buscando vozes offline instaladas…',
+                style: T.caption.copyWith(color: mutedColor));
+          }
+          return Text('Nenhuma voz offline em francês encontrada no aparelho.',
+              style: T.caption.copyWith(color: mutedColor));
+        }
+
+        final curVoice = store.settings['ttsVoice'] ?? voices.first['name'];
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: T.s2,
+              runSpacing: T.s2,
+              children: [
+                for (var i = 0; i < min(6, voices.length); i++) ...[
+                  Builder(builder: (ctx) {
+                    final v = voices[i];
+                    final isSel = curVoice == v['name'];
+                    return ChoiceChip(
+                      label: Text(
+                        _cleanVoiceLabel(v, i),
+                        style: TextStyle(
+                          color: isSel ? T.text : textColor,
+                          fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
+                          fontSize: 12,
+                        ),
+                      ),
+                      selected: isSel,
+                      selectedColor: selBg,
+                      backgroundColor: cardBg,
+                      onSelected: (_) async {
+                        await store.set('ttsVoice', v['name']!);
+                        await applyTtsVoice(v['name']!);
+                        if (mounted) setState(() {});
+                        await speakFr('Bonjour ! Comment ça va ?');
+                      },
+                    );
+                  }),
+                ],
+              ],
+            ),
+            const SizedBox(height: T.s1),
+            Text(
+              'Toque para ouvir a amostra. A voz escolhida vale para todo o aplicativo.',
+              style: T.caption.copyWith(color: mutedColor, fontSize: 11),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 class ReviewScreen extends StatefulWidget {

@@ -5,6 +5,7 @@ import '../db.dart';
 import '../main.dart';
 import '../srs.dart';
 import '../ui.dart';
+import 'review.dart' show VoicePicker;
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -67,11 +68,13 @@ class _HomeScreenState extends State<HomeScreen> {
                             store.todayMet ? '🔥' : '⏳',
                             '$s ${s == 1 ? 'dia' : 'dias'}'),
                         _ring(
-                            'Meta diária',
-                            store.todayProgress,
-                            T.lavender,
-                            '${(store.todayProgress * 100).toInt()}%',
-                            '$revDone/$gRev rev · ${readSec ~/ 60}/$gMin min'),
+                          'Meta diária',
+                          store.todayProgress,
+                          T.lavender,
+                          '${(store.todayProgress * 100).toInt()}%',
+                          '$revDone/$gRev rev',
+                          sub: '${readSec ~/ 60}/$gMin min',
+                        ),
                       ],
                     ),
                     const SizedBox(height: T.s3),
@@ -161,15 +164,27 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       );
 
-  Widget _ring(String label, double v, Color c, String big, String small) =>
+  Widget _ring(String label, double v, Color c, String big, String small,
+          {String? sub}) =>
       Column(children: [
         StatRing(
           value: v,
           color: c,
-          center: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(big, style: T.title),
-            Text(small, style: T.caption),
-          ]),
+          center: Padding(
+            padding: const EdgeInsets.all(T.s3),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text(big, style: T.title),
+                Text(small,
+                    style: T.caption.copyWith(fontWeight: FontWeight.w600)),
+                if (sub != null)
+                  Text(sub,
+                      style: T.caption
+                          .copyWith(color: T.textMuted, fontSize: 11)),
+              ]),
+            ),
+          ),
         ),
         const SizedBox(height: T.s2),
         Text(label, style: T.secondary),
@@ -442,7 +457,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   await store.set('reminderHour', '$v');
                   scheduleReminder();
                 }),
+                const SizedBox(height: T.s4),
+                Text('Voz da locutora (offline)', style: T.secondary),
                 const SizedBox(height: T.s2),
+                const VoicePicker(),
+                const SizedBox(height: T.s3),
                 Row(children: [
                   Expanded(
                       child: Text('Congelamento de ofensiva (1x/sem)',

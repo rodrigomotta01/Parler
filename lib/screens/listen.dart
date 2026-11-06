@@ -1453,8 +1453,14 @@ class _BilingualParagraphState extends State<BilingualParagraph> {
               )
             : (saved
                 ? BoxDecoration(
-                    color: T.butter.withValues(alpha: 0.7),
+                    color: widget.pal.highlight,
                     borderRadius: BorderRadius.circular(4),
+                    border: Border(
+                      bottom: BorderSide(
+                        color: widget.pal.highlightLine,
+                        width: 1.5,
+                      ),
+                    ),
                   )
                 : null),
         child: Text(
@@ -1935,48 +1941,10 @@ class _StoryScreenState extends State<StoryScreen> {
                     ],
                   ),
                   const SizedBox(height: T.s3),
-                  FutureBuilder<List<Map<String, String>>>(
-                    future: getOfflineFrenchVoices(),
-                    builder: (context, snap) {
-                      final voices = snap.data ?? [];
-                      if (voices.isEmpty) return const SizedBox.shrink();
-                      final curVoice = store.settings['ttsVoice'] ?? '';
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Voz da locutora (offline)',
-                              style: T.secondary.copyWith(color: pal.muted)),
-                          const SizedBox(height: T.s1),
-                          Wrap(
-                            spacing: T.s2,
-                            runSpacing: T.s1,
-                            children: [
-                              for (final v in voices.take(5))
-                                ChoiceChip(
-                                  label: Text(
-                                    v['name']?.split('/').last ?? 'Voz',
-                                    style: TextStyle(
-                                      color: curVoice == v['name']
-                                          ? T.text
-                                          : pal.muted,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  selected: curVoice == v['name'],
-                                  selectedColor: pal.accent,
-                                  backgroundColor: pal.card,
-                                  onSelected: (_) async {
-                                    await store.set('ttsVoice', v['name']!);
-                                    await applyTtsVoice(v['name']!);
-                                    setSheetState(() {});
-                                  },
-                                ),
-                            ],
-                          ),
-                        ],
-                      );
-                    },
-                  ),
+                  Text('Voz da locutora (offline)',
+                      style: T.secondary.copyWith(color: pal.muted)),
+                  const SizedBox(height: T.s1),
+                  VoicePicker(isDark: _themeName == 'night'),
                 ],
               ),
             ),
@@ -1990,7 +1958,6 @@ class _StoryScreenState extends State<StoryScreen> {
     final myRun = ++_runId;
     _updateCursor(playing: true);
     final paras = widget.b.chapters[_chap].paragraphs;
-    await tts.setLanguage('fr-FR');
     await tts.awaitSpeakCompletion(true);
 
     for (var p = _paraIdx; p < paras.length; p++) {
@@ -2074,11 +2041,8 @@ class _StoryScreenState extends State<StoryScreen> {
 
         final hasExclamation = speakText.contains('!');
         final hasQuestion = speakText.contains('?');
-        final pitch = hasExclamation ? 1.12 : (hasQuestion ? 1.08 : 1.0);
-        await tts.setPitch(pitch);
         await tts.setSpeechRate(_rate);
         await tts.speak(speakText);
-        await tts.setPitch(1.0);
         _fallbackWordTimer?.cancel();
 
         if (!mounted || _runId != myRun || !_playing) return;
@@ -2164,7 +2128,6 @@ class _StoryScreenState extends State<StoryScreen> {
     } else {
       final sents = splitSentences(paras[p]);
       if (s < sents.length && !sents[s].startsWith('[[IMG:')) {
-        await tts.setLanguage('fr-FR');
         await tts.setSpeechRate(_rate);
         await tts.speak(sents[s]);
       }

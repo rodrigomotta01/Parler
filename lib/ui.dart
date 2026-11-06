@@ -77,6 +77,8 @@ typedef ReaderPalette = ({
   Color muted,
   Color accent,
   Color divider,
+  Color highlight,
+  Color highlightLine,
   Brightness brightness,
 });
 
@@ -88,6 +90,8 @@ abstract final class ReaderTheme {
     muted: T.textMuted,
     accent: T.lavender,
     divider: T.hairline,
+    highlight: Color(0xB3FBEDB5), // T.butter @ 70%
+    highlightLine: Colors.transparent,
     brightness: Brightness.light,
   );
   static const sepia = (
@@ -97,6 +101,8 @@ abstract final class ReaderTheme {
     muted: Color(0xFF9C8B78),
     accent: Color(0xFFDEC39F),
     divider: Color(0x1A5B4636),
+    highlight: Color(0x8CF1D98A),
+    highlightLine: Color(0xFFB8893A),
     brightness: Brightness.light,
   );
   static const night = (
@@ -106,6 +112,8 @@ abstract final class ReaderTheme {
     muted: Color(0xFF7D705F),
     accent: Color(0xFF4A4060),
     divider: Color(0x26CDBB9C),
+    highlight: Color(0x4DE0B84A),
+    highlightLine: Color(0xFFE0B84A),
     brightness: Brightness.dark,
   );
 

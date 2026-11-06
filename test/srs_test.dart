@@ -8,6 +8,7 @@ import 'package:parler/db.dart';
 import 'package:parler/main.dart';
 import 'package:parler/screens/grammar.dart';
 import 'package:parler/screens/listen.dart';
+import 'package:parler/screens/review.dart';
 import 'package:parler/srs.dart';
 import 'package:parler/ui.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
@@ -316,8 +317,24 @@ void main() {
     expect(bookPageInfo(pdfBook, 0, 6), (3, 3));
   });
 
-  test('grammar: validates 14 modules, exercises, and conjDrill generator', () {
-    expect(grammarTopics.length, 14);
+  test('pickFrenchVoices: filters network voices and sorts by quality', () {
+    final raw = [
+      {'name': 'fr-ca-x-low', 'locale': 'fr-CA', 'quality': 'low', 'network_required': '0'},
+      {'name': 'fr-fr-x-online', 'locale': 'fr-FR', 'quality': 'very_high', 'network_required': '1'},
+      {'name': 'fr-fr-x-high', 'locale': 'fr-FR', 'quality': 'high', 'network_required': '0'},
+      {'name': 'en-us-x-test', 'locale': 'en-US', 'quality': 'very_high', 'network_required': '0'},
+      {'name': 'fr-fr-x-vhigh', 'locale': 'fr-FR', 'quality': 'very_high', 'network_required': '0'},
+    ];
+
+    final voices = pickFrenchVoices(raw);
+    expect(voices.length, 3);
+    expect(voices[0]['name'], 'fr-fr-x-vhigh');
+    expect(voices[1]['name'], 'fr-fr-x-high');
+    expect(voices[2]['name'], 'fr-ca-x-low');
+  });
+
+  test('grammar: validates 15 modules, exercises, and conjDrill generator', () {
+    expect(grammarTopics.length, 15);
     for (final t in grammarTopics) {
       expect(t.id.isNotEmpty, isTrue);
       expect(t.title.isNotEmpty, isTrue);

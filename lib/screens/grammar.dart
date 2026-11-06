@@ -1235,6 +1235,187 @@ final grammarTopics = <GrammarTopic>[
       ),
     ],
   ),
+  const GrammarTopic(
+    id: 'expressions',
+    title: 'Expressões do Dia a Dia e Idiomáticas',
+    level: 'A2',
+    icon: CupertinoIcons.chat_bubble_2_fill,
+    summary: 'Ça marche, avoir la flemme, du coup e como os nativos realmente conversam.',
+    sections: [
+      GrammarSection(
+        title: '1. Cortesia ágil e respostas automáticas',
+        content:
+            'No dia a dia, os franceses raramente usam fórmulas formais de livros.\n'
+            'Eles usam respostas rápidas e naturais:\n\n'
+            '• "Ça marche !" → Combinado! Fechado! Dá certo!\n'
+            '• "Pas de souci !" → Sem problemas! De nada!\n'
+            '• "Volontiers !" → Com muito prazer! / Claro que sim!\n'
+            '• "Ça te dit ?" → Você topa? Tem vontade? (Ex: "Un café, ça te dit ?")\n'
+            '• "Avec plaisir !" → De nada! Com prazer!',
+        callout: 'Ao marcar um compromisso, em vez de "D\'accord", solte um "Ça marche !" como os franceses fazem.',
+      ),
+      GrammarSection(
+        title: '2. Reações espontâneas',
+        content:
+            'Aprenda a reagir imediatamente como um nativo:\n\n'
+            '• "Tant pis !" → Paciência! Fazer o quê! Que pena, mas vida que segue.\n'
+            '• "Tant mieux !" → Ainda bem! Que ótimo! Que bom que deu certo!\n'
+            '• "Bof !" → Ah, mais ou menos... / Tanto faz (acompanhado do bico francês).\n'
+            '• "Ça dépend." → Depende.\n'
+            '• "N\'importe quoi !" → Nada a ver! Que besteira!\n'
+            '• "C\'est pas grave !" → Não tem problema, não se preocupe!\n'
+            '• "Ça m\'est égal." → Para mim tanto faz, escolha você.',
+      ),
+      GrammarSection(
+        title: '3. Francês falado informal e muletas de conversa',
+        content:
+            'Palavras que você ouvirá em quase toda frase na França:\n\n'
+            '• "Du coup..." → "Aí...", "Então...". É a muleta verbal número 1 de Paris!\n'
+            '• "En fait..." → "Na verdade...", "Aliás...".\n'
+            '• "Carrément !" ou "Grave !" → "Com certeza!", "Totalmente!".\n'
+            '• "Trop" como "muito" → "C\'est trop bon !" (É bom demais!).\n'
+            '• "C\'est nul !" → É péssimo! Que chato!\n'
+            '• "C\'est ouf !" → É incrível! Muito louco! ("ouf" é "fou" invertido no verlan).\n'
+            '• "On y va ?" → Bora? Vamos?',
+        callout: '"Du coup" é onipresente: "Il pleut, du coup je reste chez moi." (Está chovendo, aí vou ficar em casa).',
+      ),
+      GrammarSection(
+        title: '4. Expressões idiomáticas clássicas',
+        content:
+            'Metáforas que todo francês usa no cotidiano:\n\n'
+            '• "Avoir la flemme" → Estar com preguiça / sem ânimo ("J\'ai la flemme").\n'
+            '• "Coûter les yeux de la tête" → Custar os olhos da cara.\n'
+            '• "Poser un lapin à quelqu\'un" → Dar um bolo em alguém.\n'
+            '• "Avoir le cafard" → Estar triste, nostálgico, borocoxô.\n'
+            '• "Faire la grasse matinée" → Dormir até tarde no fim de semana.\n'
+            '• "Il pleut des cordes !" → Está chovendo torrencialmente.\n'
+            '• "Tomber dans les pommes" → Desmaiar de repente.\n'
+            '• "Ce n\'est pas la mer à boire" → Não é nenhum bicho de sete cabeças.\n'
+            '• "Avoir un coup de foudre" → Amor à primeira vista.\n'
+            '• "Raconter des salades" → Contar mentiras / historinhas inventadas.',
+      ),
+      GrammarSection(
+        title: '5. As pegadinhas perigosas com o português',
+        content:
+            'Cuidado para não cometer gafes clássicas:\n\n'
+            '❌ NUNCA diga "Je suis plein" para dizer que está satisfeito após comer!\n'
+            '   Na França, isso significa "estou bêbado" ou "estou prenhe"!\n'
+            '   Diga: "J\'ai bien mangé, merci !" ou "Je n\'ai plus faim."\n\n'
+            '• "Bon courage !" → Use para desejar força antes do trabalho ou de uma tarefa difícil.\n'
+            '• "Bonne chance !" → Use para situações de pura sorte (loteria, sorteio).\n'
+            '• "Pardon !" → Ao esbarrar em alguém na rua ou no metrô.\n'
+            '• "Excusez-moi !" → Para pedir licença ao passar ou chamar o garçom.',
+        callout: 'Terminou o jantar? Diga sempre "J\'ai bien mangé, merci !" e jamais "Je suis plein".',
+      ),
+    ],
+    examples: [
+      GrammarExample(fr: 'Ça marche, à demain !', pt: 'Combinado, até amanhã!'),
+      GrammarExample(fr: 'Pas de souci, je m\'en occupe.', pt: 'Sem problemas, eu cuido disso.'),
+      GrammarExample(fr: 'Un café, ça te dit ?', pt: 'Um café, você topa?'),
+      GrammarExample(fr: 'Tant pis, une outra fois.', pt: 'Paciência, fica para outra vez.'),
+      GrammarExample(fr: 'Tant mieux pour toi !', pt: 'Ainda bem para você! Que ótimo!'),
+      GrammarExample(fr: 'C\'est pas grave du tout.', pt: 'Não é nada grave, relaxa.'),
+      GrammarExample(fr: 'Du coup, on fait quoi ?', pt: 'Aí, a gente faz o quê?'),
+      GrammarExample(fr: 'C\'est trop bon ici !', pt: 'É bom demais aqui!'),
+      GrammarExample(fr: 'J\'ai trop la flemme aujourd\'hui.', pt: 'Tô com muita preguiça hoje.'),
+      GrammarExample(fr: 'Ça coûte les yeux de la tête.', pt: 'Isso custa os olhos da cara.'),
+      GrammarExample(fr: 'Elle m\'a posé un lapin.', pt: 'Ela me deu um bolo.'),
+      GrammarExample(fr: 'Dimanche, je fais la grasse matinée.', pt: 'Domingo eu durmo até tarde.'),
+      GrammarExample(fr: 'Dehors, il pleut des cordes !', pt: 'Lá fora está chovendo canivetes!'),
+      GrammarExample(fr: 'Ce n\'est pas la mer à boire.', pt: 'Não é nenhum bicho de sete cabeças.'),
+      GrammarExample(fr: 'J\'ai bien mangé, merci !', pt: 'Comi muito bem, obrigado! (estou satisfeito)'),
+    ],
+    exercises: [
+      GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Seu amigo propõe um almoço e você quer dizer "Combinado! Fechado!":',
+        subprompt: "___ marche pour midi !",
+        options: ['Ça', 'Il', 'Ce', 'On'],
+        solution: 'Ça',
+        explanation: 'Perfeito! "Ça marche !" é a forma mais nativa de dizer "Combinado/Fechado".',
+        hint: 'A expressão usa o pronome demonstrativo informal: Ça marche !',
+      ),
+      GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Como dizer "estou com preguiça / sem ânimo de sair":',
+        subprompt: "J'ai la ___ de sortir ce soir.",
+        options: ['flemme', 'peur', 'corde', 'pomme'],
+        solution: 'flemme',
+        explanation: 'Excelente! "Avoir la flemme" é a expressão diária mais usada na França para preguiça.',
+        hint: 'A palavra correta é "flemme" (J\'ai la flemme).',
+      ),
+      GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'O restaurante estava lotado e você não conseguiu mesa. Para dizer "Paciência / Fazer o quê":',
+        subprompt: "___ pis, on ira demain.",
+        options: ['Tant', 'Trop', 'Bien', 'Très'],
+        solution: 'Tant',
+        explanation: 'Muito bem! "Tant pis !" expressa resignação: paciência, fazer o quê.',
+        hint: 'A expressão correta é "Tant pis !" (e o oposto é "Tant melhor !").',
+      ),
+      GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Você combinou um encontro e a pessoa não apareceu. Ela te deu um bolo:',
+        subprompt: "Il m'a posé un ___ !",
+        options: ['lapin', 'chat', 'chien', 'cafard'],
+        solution: 'lapin',
+        explanation: 'Correto! "Poser un lapin à quelqu\'un" significa deixar alguém esperando / dar um bolo.',
+        hint: 'Em francês usa-se o animal "coelho": poser un lapin.',
+      ),
+      GrammarExercise(
+        type: ExerciseType.sentenceBuilder,
+        prompt: 'Monte a frase informal para convidar:',
+        subprompt: 'Um café, você topa?',
+        tokens: ['Un', 'café', 'ça', 'te', 'dit'],
+        solution: ['Un', 'café', 'ça', 'te', 'dit'],
+        explanation: 'Excelente! "Un café, ça te dit ?" é o jeito mais natural de convidar alguém.',
+      ),
+      GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'A muleta de conversa mais falada na França para dizer "Então / Aí":',
+        subprompt: "___ coup, on se voit où ?",
+        options: ['Du', 'De', 'Au', 'En'],
+        solution: 'Du',
+        explanation: 'Perfeito! "Du coup" é a transição/muleta número 1 dos franceses.',
+        hint: 'A expressão exata é "Du coup".',
+      ),
+      GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Como dizer educadamente que está satisfeito após uma refeição deliciosa?',
+        subprompt: "J'ai bien ___, merci !",
+        options: ['mangé', 'plein', 'bu', 'faim'],
+        solution: 'mangé',
+        explanation: 'Muito bem! Sempre diga "J\'ai bien mangé, merci !". Dizer "Je suis plein" seria uma gafe.',
+        hint: 'Use o particípio do verbo manger: J\'ai bien mangé.',
+      ),
+      GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Domingo é dia de acordar tarde e relaxar na cama. Qual a expressão?',
+        subprompt: "Je fais la ___ matinée.",
+        options: ['grasse', 'grande', 'longue', 'bonne'],
+        solution: 'grasse',
+        explanation: 'Exato! "Faire la grasse matinée" significa dormir até tarde no dia de folga.',
+        hint: 'A expressão tradicional francesa é "la grasse matinée".',
+      ),
+      GrammarExercise(
+        type: ExerciseType.sentenceBuilder,
+        prompt: 'Monte a expressão para acalmar alguém:',
+        subprompt: 'Não é nada grave.',
+        tokens: ['C\'est', 'pas', 'grave', 'du', 'tout'],
+        solution: ['C\'est', 'pas', 'grave', 'du', 'tout'],
+        explanation: 'Perfeito! "C\'est pas grave du tout" = Não se preocupe de jeito nenhum.',
+      ),
+      GrammarExercise(
+        type: ExerciseType.fillBlank,
+        prompt: 'Para dizer que algo é difícil mas "não é o fim do mundo / bicho de 7 cabeças":',
+        subprompt: "Ce n'est pas la ___ à boire.",
+        options: ['mer', 'eau', 'terre', 'pomme'],
+        solution: 'mer',
+        explanation: 'Correto! "Ce n\'est pas la mer à boire" significa que a tarefa não é tão difícil assim.',
+        hint: 'A expressão compara a dificuldade a beber o mar: "la mer à boire".',
+      ),
+    ],
+  ),
 ];
 
 void _speak(String text) => speakFr(text);
